@@ -18,7 +18,19 @@ class ScorerConfig:
     chat_lag_seconds: int = 8
     min_hype_z: float = 2.0
     per_user_cap: int = 2
-    weights: dict = field(default_factory=lambda: {"messages": 1.0, "hype": 1.5, "unique": 1.0})
+    score_delay_seconds: int = 15
+    weights: dict = field(default_factory=lambda: {"messages": 1.0, "hype": 1.5, "unique": 1.0, "audio": 1.0})
+
+
+@dataclass
+class RecorderConfig:
+    quality: str = "best"
+    segment_seconds: int = 10
+    buffer_minutes: int = 10
+    pre_roll: int = 35
+    post_roll: int = 20
+    clip_retention_days: int = 3
+    max_concurrent: int = 20
 
 
 @dataclass
@@ -48,6 +60,7 @@ class Settings:
     twitch_client_id: str
     twitch_client_secret: str
     scorer: ScorerConfig
+    recorder: RecorderConfig
     campaigns: list[Campaign]
 
     def active_channels(self) -> dict[str, tuple[ChannelRef, list[Campaign]]]:
@@ -73,7 +86,10 @@ def load(root: Path | str = ".") -> Settings:
     c = _read(root / "campaigns.yaml")
 
     sc = s.get("scorer", {}) or {}
-    scorer = ScorerConfig(**{k: v for k, v in sc.items() if k in ScorerConfig.__dataclass_fields__})
+    scorer = ScorerConfig(**{k: v for k, v in sc.items() if k in ScorerConfig.__dataclass_fields__ and k != "weights"})
+    scorer.weights.update(sc.get("weights", {}) or {})   # partial weights keep the other defaults
+    rc = s.get("recorder", {}) or {}
+    recorder = RecorderConfig(**{k: v for k, v in rc.items() if k in RecorderConfig.__dataclass_fields__})
 
     campaigns = []
     for raw in c.get("campaigns", []) or []:
@@ -95,5 +111,6 @@ def load(root: Path | str = ".") -> Settings:
         twitch_client_id=tw.get("client_id", "") or "",
         twitch_client_secret=tw.get("client_secret", "") or "",
         scorer=scorer,
+        recorder=recorder,
         campaigns=campaigns,
     )

@@ -8,7 +8,7 @@ stream and a 50k-viewer stream are judged fairly. Every bucket (default 5s) we m
 and compare each to the previous ~10 minutes. The weighted sum of the z-scores is the
 hype score. A moment fires when it beats the threshold, then the channel cools down.
 
-Step 2 will add an audio-loudness signal through `add_signal` with the same logic.
+When the stream is being recorded, audio loudness is added as a 4th signal (a boost only).
 """
 from __future__ import annotations
 
@@ -56,12 +56,20 @@ def _z(value: float, history: list[float], floor: float) -> float:
 
 
 class ChannelScorer:
+    """Chat buckets are scored `score_delay_seconds` after they end, so the audio for the
+    same moment (which arrives only once a recorded segment finishes) can be included."""
+
+    AUDIO_FLOOR = 3.0   # LU; quieter-than-this variation is just normal talking
+
     def __init__(self, channel: str, cfg: ScorerConfig, extra_tokens: set[str] | None = None):
         self.channel = channel
         self.cfg = cfg
         self.extra = frozenset(extra_tokens or ())
         self.history: deque[dict[str, float]] = deque(maxlen=cfg.baseline_buckets)
-        self.current: _Bucket | None = None
+        self.audio: deque[tuple[float, float]] = deque(maxlen=cfg.baseline_buckets * cfg.bucket_seconds + 120)
+        self.audio_history: deque[float] = deque(maxlen=cfg.baseline_buckets)
+        self.open: dict[float, _Bucket] = {}
+        self.next_close: float | None = None
         self.last_fired = -math.inf
 
     def _bucket_start(self, ts: float) -> float:
@@ -70,41 +78,71 @@ class ChannelScorer:
 
     def add_message(self, ts: float, user: str, text: str) -> list[Moment]:
         fired = self.tick(ts)
-        if self.current is None:
-            self.current = _Bucket(self._bucket_start(ts))
-        self.current.add(user, is_hype(text, self.extra), self.cfg.per_user_cap)
+        start = self._bucket_start(ts)
+        if self.next_close is None:
+            self.next_close = start
+        if start < self.next_close:   # late message for an already-scored bucket
+            return fired
+        bucket = self.open.setdefault(start, _Bucket(start))
+        bucket.add(user, is_hype(text, self.extra), self.cfg.per_user_cap)
         return fired
 
+    def add_audio(self, ts: float, lufs: float) -> None:
+        """One loudness reading (peak LUFS for the second starting at `ts`)."""
+        self.audio.append((ts, lufs))
+
     def tick(self, now: float) -> list[Moment]:
-        """Close any finished buckets. Call this regularly even when chat is silent."""
+        """Score every bucket whose delay has passed. Call regularly, even when chat is silent."""
         fired: list[Moment] = []
-        b = self.cfg.bucket_seconds
-        while self.current is not None and now >= self.current.start + b:
-            m = self._close(self.current)
+        b, delay = self.cfg.bucket_seconds, self.cfg.score_delay_seconds
+        while self.next_close is not None and now >= self.next_close + b + delay:
+            # Missing buckets are empty ones: silence is part of the baseline.
+            bucket = self.open.pop(self.next_close, None) or _Bucket(self.next_close)
+            m = self._close(bucket)
             if m:
                 fired.append(m)
-            # Keep rolling forward with empty buckets: silence is part of the baseline.
-            self.current = _Bucket(self.current.start + b)
+            self.next_close += b
         return fired
 
     def reset(self) -> None:
         """Call when a stream goes offline so the next stream starts with a fresh baseline."""
         self.history.clear()
-        self.current = None
+        self.audio.clear()
+        self.audio_history.clear()
+        self.open.clear()
+        self.next_close = None
+
+    def _audio_peak(self, bucket: _Bucket) -> float | None:
+        # Chat reacts ~chat_lag seconds AFTER the moment, so look back that far for the sound.
+        lo = bucket.start - self.cfg.chat_lag_seconds - self.cfg.bucket_seconds
+        hi = bucket.start + self.cfg.bucket_seconds
+        vals = [l for t, l in self.audio if lo <= t < hi]
+        return max(vals) if vals else None
 
     def _close(self, bucket: _Bucket) -> Moment | None:
         vals = bucket.values()
         cfg = self.cfg
         moment = None
+        peak = self._audio_peak(bucket)
         if len(self.history) >= cfg.warmup_buckets and vals["messages"] >= cfg.min_messages:
             floors = {"messages": 2.0, "hype": 1.0, "unique": 2.0}
             zs = {k: _z(vals[k], [h[k] for h in self.history], floors[k]) for k in vals}
+            if peak is not None and len(self.audio_history) >= cfg.warmup_buckets:
+                zs["audio"] = _z(peak, list(self.audio_history), self.AUDIO_FLOOR)
             score = sum(cfg.weights.get(k, 0) * max(z, 0) for k, z in zs.items())
             at = bucket.start - cfg.chat_lag_seconds
             # Volume alone (raid, giveaway command, bot spam) isn't a moment: chat must REACT.
+            # Audio only boosts the score; a loud game sound with no chat reaction never fires.
             if zs["hype"] >= cfg.min_hype_z and score >= cfg.threshold and bucket.start - self.last_fired >= cfg.cooldown_seconds:
                 self.last_fired = bucket.start
-                moment = Moment(self.channel, at, round(score, 2),
-                                {**vals, **{f"z_{k}": round(z, 2) for k, z in zs.items()}})
+                sig = {**vals, **{f"z_{k}": round(z, 2) for k, z in zs.items()}}
+                if peak is not None:
+                    sig["audio_lufs"] = round(peak, 1)
+                moment = Moment(self.channel, at, round(score, 2), sig)
         self.history.append(vals)
+        if peak is not None:
+            self.audio_history.append(peak)
+        # drop audio we'll never look at again
+        while self.audio and self.audio[0][0] < bucket.start - cfg.chat_lag_seconds - 2 * cfg.bucket_seconds:
+            self.audio.popleft()
         return moment
