@@ -61,8 +61,11 @@ class ChannelScorer:
 
     AUDIO_FLOOR = 3.0   # LU; quieter-than-this variation is just normal talking
 
-    def __init__(self, channel: str, cfg: ScorerConfig, extra_tokens: set[str] | None = None):
+    def __init__(self, channel: str, cfg: ScorerConfig, extra_tokens: set[str] | None = None,
+                 collect: bool = False):
         self.channel = channel
+        # VOD mode: keep every scored bucket (start, score, z-scores) to rank the best N afterwards
+        self.collected: list[tuple[float, float, dict]] | None = [] if collect else None
         self.cfg = cfg
         self.extra = frozenset(extra_tokens or ())
         self.history: deque[dict[str, float]] = deque(maxlen=cfg.baseline_buckets)
@@ -131,6 +134,8 @@ class ChannelScorer:
                 zs["audio"] = _z(peak, list(self.audio_history), self.AUDIO_FLOOR)
             score = sum(cfg.weights.get(k, 0) * max(z, 0) for k, z in zs.items())
             at = bucket.start - cfg.chat_lag_seconds
+            if self.collected is not None:
+                self.collected.append((at, score, zs))
             # Volume alone (raid, giveaway command, bot spam) isn't a moment: chat must REACT.
             # Audio only boosts the score; a loud game sound with no chat reaction never fires.
             if zs["hype"] >= cfg.min_hype_z and score >= cfg.threshold and bucket.start - self.last_fired >= cfg.cooldown_seconds:

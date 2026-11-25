@@ -6,3 +6,6 @@ Campaigns/
 campaigns.yaml
 settings.yaml
 .env
+
+# Studio (laptop)
+studio.yaml

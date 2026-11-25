@@ -1,0 +1,35 @@
+# Copy to studio.yaml on your laptop.
+server_url: "http://100.x.y.z:8787"   # your Oracle VM's Tailscale IP
+token: ""                             # the token the watcher printed (data/api_token.txt on the server)
+output_dir: Campaigns                 # campaign folders are created here
+poll_minutes: 3                       # how often `studio run` checks for newly approved clips
+
+editing:
+  target_seconds: 35        # preferred clip length (kept inside each campaign's min/max)
+  layout: blur              # blur | crop | facecam  (a campaign's own layout wins)
+  blur_zoom: 1.25           # blur layout: how much to zoom the main video (1.0 = whole frame)
+  fps: 30
+  encoder: auto             # auto, or force one: h264_nvenc, h264_qsv, h264_videotoolbox, h264_amf, libx264
+
+captions:
+  enabled: true
+  whisper_model: small      # tiny / base / small / medium. Bigger = more accurate, slower
+  language: null            # null = auto-detect; "en" is faster if you know it
+  font: Arial               # any font installed on the laptop
+  size: 96
+  words_per_line: 3
+  uppercase: true
+  highlight_color: "#FFD21F"   # the word being spoken
+  position: 0.70            # 0 = top, 1 = bottom. 0.70 keeps captions above TikTok/Reels buttons
+
+# Per-channel facecam layout. Rectangles are fractions of the source frame: [x, y, width, height].
+facecam: {}
+#  twitch:xqc:
+#    cam:  [0.00, 0.00, 0.25, 0.30]
+#    game: [0.20, 0.00, 0.60, 1.00]
+#    cam_share: 0.38        # how much of the vertical frame the cam gets
+
+vod:
+  top: 8                    # moments to pick from each VOD
+  min_gap_seconds: 90
+  whisper_model: base       # used to find keywords in VODs without chat (faster than the caption model)

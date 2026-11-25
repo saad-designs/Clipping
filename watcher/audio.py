@@ -24,10 +24,10 @@ def parse_ebur128(output: str, seg_start: float) -> list[tuple[float, float]]:
     return sorted(peaks.items())
 
 
-def analyze(seg_path: Path, seg_start: float) -> list[tuple[float, float]]:
+def analyze(seg_path: Path, seg_start: float, timeout: float | None = 60) -> list[tuple[float, float]]:
     proc = subprocess.run(
         ["ffmpeg", "-nostats", "-hide_banner", "-v", "verbose", "-i", str(seg_path),
          "-map", "0:a:0?", "-af", "ebur128=framelog=verbose", "-f", "null", "-"],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, timeout=timeout,
     )
     return parse_ebur128(proc.stderr, seg_start)
