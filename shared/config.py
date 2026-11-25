@@ -31,6 +31,27 @@ class RecorderConfig:
     post_roll: int = 20
     clip_retention_days: int = 3
     max_concurrent: int = 20
+    min_free_gb: float = 15        # below this: no new recordings, oldest clips pruned
+
+
+@dataclass
+class ApiConfig:
+    host: str = "0.0.0.0"          # reach it over Tailscale; don't open this port to the internet
+    port: int = 8787
+    token: str = ""                # required; every request must send it
+
+
+@dataclass
+class KickConfig:
+    # Kick's public Pusher key for chat. Kick changes it occasionally; update here if chat stops.
+    pusher_key: str = "32cbd69e4b950bf97679"
+    pusher_cluster: str = "us2"
+
+
+@dataclass
+class YouTubeConfig:
+    # Netscape cookies.txt exported from a logged-in browser; fixes "confirm you're not a bot".
+    cookies_file: str = ""
 
 
 @dataclass
@@ -52,6 +73,15 @@ class Campaign:
     max_seconds: int = 60
     extra_hype_tokens: list[str] = field(default_factory=list)
     notes: str = ""
+    required_text: list[str] = field(default_factory=list)   # hashtags/mentions the campaign demands
+    layout: str | None = None      # blur | crop | facecam (Studio default if empty)
+
+    def public(self) -> dict:
+        """What Studio needs to know about this campaign."""
+        return {"name": self.name, "active": self.active, "min_seconds": self.min_seconds,
+                "max_seconds": self.max_seconds, "required_text": self.required_text,
+                "layout": self.layout, "notes": self.notes,
+                "channels": [c.key for c in self.channels]}
 
 
 @dataclass
@@ -62,6 +92,12 @@ class Settings:
     scorer: ScorerConfig
     recorder: RecorderConfig
     campaigns: list[Campaign]
+    api: ApiConfig = field(default_factory=ApiConfig)
+    kick: KickConfig = field(default_factory=KickConfig)
+    youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
+
+    def campaign(self, name: str) -> Campaign | None:
+        return next((c for c in self.campaigns if c.name == name), None)
 
     def active_channels(self) -> dict[str, tuple[ChannelRef, list[Campaign]]]:
         """channel key -> (channel, campaigns that include it). One chat connection per channel."""
@@ -80,6 +116,20 @@ def _read(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+def _channel(raw: dict) -> ChannelRef:
+    platform = raw["platform"].lower()
+    login = str(raw["login"]).strip().lstrip("@")
+    # YouTube channel ids (UC...) are case-sensitive; Twitch/Kick names are not.
+    if not (platform == "youtube" and login.startswith("UC")):
+        login = login.lower()
+    return ChannelRef(platform, login)
+
+
+def _make(cls, raw: dict | None):
+    raw = raw or {}
+    return cls(**{k: v for k, v in raw.items() if k in cls.__dataclass_fields__})
+
+
 def load(root: Path | str = ".") -> Settings:
     root = Path(root)
     s = _read(root / "settings.yaml")
@@ -88,8 +138,7 @@ def load(root: Path | str = ".") -> Settings:
     sc = s.get("scorer", {}) or {}
     scorer = ScorerConfig(**{k: v for k, v in sc.items() if k in ScorerConfig.__dataclass_fields__ and k != "weights"})
     scorer.weights.update(sc.get("weights", {}) or {})   # partial weights keep the other defaults
-    rc = s.get("recorder", {}) or {}
-    recorder = RecorderConfig(**{k: v for k, v in rc.items() if k in RecorderConfig.__dataclass_fields__})
+    recorder = _make(RecorderConfig, s.get("recorder"))
 
     campaigns = []
     for raw in c.get("campaigns", []) or []:
@@ -97,12 +146,13 @@ def load(root: Path | str = ".") -> Settings:
         campaigns.append(Campaign(
             name=raw["name"],
             active=raw.get("active", True),
-            channels=[ChannelRef(ch["platform"].lower(), str(ch["login"]).lower())
-                      for ch in raw.get("channels", [])],
+            channels=[_channel(ch) for ch in raw.get("channels", [])],
             min_seconds=clip.get("min_seconds", 15),
             max_seconds=clip.get("max_seconds", 60),
             extra_hype_tokens=[t.upper() for t in raw.get("extra_hype_tokens", [])],
             notes=raw.get("notes", ""),
+            required_text=list(raw.get("required_text", []) or []),
+            layout=raw.get("layout") or None,
         ))
 
     tw = s.get("twitch", {}) or {}
@@ -113,4 +163,7 @@ def load(root: Path | str = ".") -> Settings:
         scorer=scorer,
         recorder=recorder,
         campaigns=campaigns,
+        api=_make(ApiConfig, s.get("api")),
+        kick=_make(KickConfig, s.get("kick")),
+        youtube=_make(YouTubeConfig, s.get("youtube")),
     )

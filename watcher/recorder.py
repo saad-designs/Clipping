@@ -1,6 +1,6 @@
 """Rolling stream recorder.
 
-    streamlink --stdout <url> best  |  ffmpeg -c copy -f segment  →  data/buffer/<channel>/<unix_start>.ts
+    streamlink/yt-dlp → stdout  |  ffmpeg -c copy -f segment  →  data/buffer/<channel>/<unix_start>.ts
 
 No re-encoding, so each stream costs almost no CPU. Old segments are deleted after
 `buffer_minutes`, except ones a pending clip still needs.
@@ -20,14 +20,6 @@ log = logging.getLogger("recorder")
 
 SourceCmd = Callable[[str], list[str]]           # channel key -> command that writes MPEG-TS to stdout
 OnSegment = Callable[[str, Path, float], None]   # (channel, finished segment, its unix start)
-
-
-def streamlink_cmd(quality: str) -> SourceCmd:
-    def cmd(channel: str) -> list[str]:
-        platform, login = channel.split(":", 1)
-        url = {"twitch": f"https://twitch.tv/{login}"}[platform]
-        return ["streamlink", "--stdout", "--loglevel", "error", url, quality]
-    return cmd
 
 
 def fake_cmd(sample: str) -> SourceCmd:
@@ -138,6 +130,9 @@ class RecorderPool:
         self.max = max_concurrent
         self.offline_retry = offline_retry
         self.recorders: dict[str, Recorder] = {}
+
+    def recording(self) -> list[str]:
+        return [ch for ch, r in self.recorders.items() if r.running]
 
     def is_recording(self, channel: str) -> bool:
         r = self.recorders.get(channel)

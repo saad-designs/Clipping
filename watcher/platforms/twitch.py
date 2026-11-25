@@ -12,11 +12,14 @@ import random
 import time
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from typing import Awaitable, Callable
+
+from watcher.platforms.base import Platform, streamlink
 
 log = logging.getLogger("twitch")
 
-OnMessage = Callable[[str, float, str, str], Awaitable[None] | None]  # (login, ts, user, text)
+ChatHandler = Callable[[str, float, str, str], Awaitable[None] | None]  # (login, ts, user, text)
 
 
 def parse_privmsg(line: str) -> tuple[str, str, str] | None:
@@ -38,9 +41,10 @@ def parse_privmsg(line: str) -> tuple[str, str, str] | None:
 class TwitchChat:
     HOST, PORT = "irc.chat.twitch.tv", 6697
 
-    def __init__(self, logins: list[str], on_message: OnMessage):
+    def __init__(self, logins: list[str], on_message: ChatHandler, on_connect: Callable[[bool], None] | None = None):
         self.logins = logins
         self.on_message = on_message
+        self.on_connect = on_connect or (lambda up: None)
 
     async def run(self) -> None:
         backoff = 1
@@ -50,6 +54,7 @@ class TwitchChat:
                 backoff = 1
             except (OSError, asyncio.IncompleteReadError, ConnectionError) as e:
                 log.warning("chat disconnected (%s); retrying in %ss", e, backoff)
+            self.on_connect(False)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 
@@ -65,6 +70,7 @@ class TwitchChat:
                 await asyncio.sleep(11)
         await writer.drain()
         log.info("joined %d twitch chats", len(self.logins))
+        self.on_connect(True)
         try:
             while True:
                 raw = await reader.readline()
@@ -106,10 +112,47 @@ class TwitchHelix:
         with urllib.request.urlopen(req, timeout=15) as r:
             return json.load(r)
 
-    async def live_logins(self, logins: list[str]) -> set[str]:
-        live: set[str] = set()
+    async def live_streams(self, logins: list[str]) -> dict[str, dict]:
+        """{login: {"user_id", "title", "viewers", "started_at"}} for live channels."""
+        live: dict[str, dict] = {}
         for i in range(0, len(logins), 100):  # API takes 100 logins per request
             q = "&".join(f"user_login={urllib.parse.quote(l)}" for l in logins[i:i + 100])
             data = await asyncio.to_thread(self._get, f"https://api.twitch.tv/helix/streams?{q}&first=100")
-            live |= {s["user_login"].lower() for s in data.get("data", [])}
+            for st in data.get("data", []):
+                live[st["user_login"].lower()] = {"user_id": st["user_id"], "title": st.get("title", ""),
+                                                  "viewers": st.get("viewer_count", 0),
+                                                  "started_at": st.get("started_at")}
         return live
+
+    async def recent_clips(self, broadcaster_id: str, since: float) -> list[dict]:
+        started = datetime.fromtimestamp(since, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        data = await asyncio.to_thread(
+            self._get, f"https://api.twitch.tv/helix/clips?broadcaster_id={broadcaster_id}&started_at={started}&first=100")
+        return data.get("data", [])
+
+
+def clip_center(clip: dict) -> float:
+    """A viewer clip is made right after the moment: it covers ~[created - duration, created]."""
+    created = datetime.strptime(clip["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+    return created - float(clip.get("duration", 30)) / 2
+
+
+class Twitch(Platform):
+    name = "twitch"
+
+    def __init__(self, logins, on_message, client_id: str = "", client_secret: str = ""):
+        super().__init__(logins, on_message)
+        self.helix = TwitchHelix(client_id, client_secret) if client_id and client_secret else None
+
+    def _connected(self, up: bool) -> None:
+        self.chat_connected = set(self.logins) if up else set()
+
+    async def run_chat(self) -> None:
+        await TwitchChat(self.logins, lambda login, ts, user, text: self.on_message("twitch", login, ts, user, text),
+                         self._connected).run()
+
+    async def live_status(self) -> dict[str, dict] | None:
+        return await self.helix.live_streams(self.logins) if self.helix else None
+
+    def record_cmd(self, login: str, info: dict | None, quality: str) -> list[str]:
+        return streamlink(f"https://twitch.tv/{login}", quality)
