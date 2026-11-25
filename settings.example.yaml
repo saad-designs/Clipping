@@ -1,0 +1,23 @@
+# Copy to settings.yaml. Everything here is optional; defaults are shown.
+data_dir: data
+
+twitch:
+  # Optional. Free at dev.twitch.tv/console. Enables live-status checks and
+  # the "viewers made a clip" signal. Chat works without it.
+  client_id: ""
+  client_secret: ""
+
+scorer:
+  bucket_seconds: 5          # chat is grouped into 5s buckets
+  baseline_buckets: 120      # 10 minutes of normal chat to compare against
+  warmup_buckets: 24         # need 2 minutes of history before firing anything
+  threshold: 6.0             # hype score needed to fire a moment (tune this)
+  cooldown_seconds: 60       # no second moment from the same channel inside this window
+  min_messages: 8            # ignore spikes in tiny chats (fewer msgs than this per bucket)
+  chat_lag_seconds: 8        # chat reacts ~8s after the moment; shift timestamp back
+  min_hype_z: 2.0            # hype reactions must rise too; pure volume (raids, bots) is ignored
+  per_user_cap: 2            # max messages counted per user per bucket (anti-spam)
+  weights:
+    messages: 1.0
+    hype: 1.5
+    unique: 1.0

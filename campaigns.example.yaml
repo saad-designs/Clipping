@@ -1,0 +1,12 @@
+# Copy to campaigns.yaml and fill in one entry per Content Rewards campaign you join.
+campaigns:
+  - name: example-campaign          # becomes the folder name: Campaigns/example-campaign/
+    active: true
+    channels:
+      - platform: twitch
+        login: xqc                  # twitch username, lowercase
+    clip:
+      min_seconds: 15
+      max_seconds: 60
+    extra_hype_tokens: []           # words this streamer's chat spams on big moments
+    notes: "Paste the campaign rules here (hashtags, banned content, etc.)"
