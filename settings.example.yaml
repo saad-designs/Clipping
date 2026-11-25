@@ -2,8 +2,9 @@
 data_dir: data
 
 twitch:
-  # Optional. Free at dev.twitch.tv/console. Enables live-status checks and
-  # the "viewers made a clip" signal. Chat works without it.
+  # Free at dev.twitch.tv/console → Register Your Application (category: Other,
+  # redirect URL: http://localhost). Strongly recommended: enables live/offline
+  # detection (record only who's live) and the "viewers clipped this" badge.
   client_id: ""
   client_secret: ""
 
@@ -32,3 +33,15 @@ recorder:
   post_roll: 20              # seconds after
   clip_retention_days: 3     # delete cut clips from the server after this
   max_concurrent: 20         # recording limit; extra channels stay chat-only
+  min_free_gb: 15            # below this: pause new recordings and prune old clips
+
+api:
+  port: 8787
+  token: ""                  # empty = one is generated into data/api_token.txt on first start
+
+kick:
+  pusher_key: "32cbd69e4b950bf97679"   # Kick's public chat key; update if Kick chat stops connecting
+  pusher_cluster: us2
+
+youtube:
+  cookies_file: ""           # path to cookies.txt if YouTube says "confirm you're not a bot"

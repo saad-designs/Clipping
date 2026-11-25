@@ -102,6 +102,7 @@ details.ch { margin: 0 0 14px; } details.ch summary { cursor: pointer; color: va
 <script>
 let status = "new", moments = [], campaigns = [], focus = 0;
 const $ = (id) => document.getElementById(id);
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 async function api(path, opts = {}) {
@@ -122,13 +123,16 @@ async function loadHealth() {
   try {
     const h = await api("/api/health");
     const live = h.channels.filter((c) => c.live).length;
+    const unknown = h.channels.filter((c) => c.live === null).length;
     $("stats").innerHTML =
-      `<span><b>${live}</b> live / ${h.channels.length} channels</span>` +
+      (unknown === h.channels.length
+        ? `<span>${plural(h.channels.length, "channel")} · live status unknown (add Twitch keys)</span>`
+        : `<span><b>${live}</b> live / ${plural(h.channels.length, "channel")}</span>`) +
       `<span><b>${h.recording}</b>/${h.max_recording} recording</span>` +
       `<span class="${h.low_disk ? "warn" : ""}"><b>${h.disk_free_gb}</b> GB free${h.low_disk ? " · recording paused" : ""}</span>`;
     $("chlist").innerHTML = h.channels.map((c) =>
       `<div class="chrow"><i class="dot ${c.recording ? "rec" : c.live ? "live" : ""}" title="${c.recording ? "recording" : c.live ? "live" : c.live === null ? "unknown" : "offline"}"></i>
-       <span><b>${esc(c.channel)}</b> ${c.chat ? "" : "· chat off "}${c.moments_1h ? "· " + c.moments_1h + " moments/h " : ""}${esc(c.title)}</span></div>`).join("");
+       <span><b>${esc(c.channel)}</b> ${c.chat ? "" : "· chat off "}${c.moments_1h ? "· " + plural(c.moments_1h, "moment") + " this hour " : ""}${esc(c.title)}</span></div>`).join("");
   } catch (e) { if (e.message !== "auth") $("stats").textContent = "Server unreachable"; }
 }
 

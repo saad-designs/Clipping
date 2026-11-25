@@ -1,0 +1,23 @@
+[Unit]
+Description=Clipping watcher (stream monitor, recorder, review dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=clipper
+Group=clipper
+WorkingDirectory=/opt/clipping
+ExecStart=/opt/clipping/venv/bin/python -m watcher.app --root /opt/clipping
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/opt/clipping/venv/bin:/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=5
+# stop child streamlink/ffmpeg processes with the service
+KillMode=control-group
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

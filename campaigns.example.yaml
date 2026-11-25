@@ -1,12 +1,19 @@
-# Copy to campaigns.yaml and fill in one entry per Content Rewards campaign you join.
+# One entry per Content Rewards campaign you join. Copy to campaigns.yaml.
+# After editing on the server:  sudo systemctl restart clipping-watcher
 campaigns:
-  - name: example-campaign          # becomes the folder name: Campaigns/example-campaign/
-    active: true
-    channels:
+  - name: example-campaign          # folder name on the laptop: Campaigns/example-campaign/
+    active: true                    # false = stop watching these channels
+    channels:                       # one campaign can cover several streamers/platforms
       - platform: twitch
-        login: xqc                  # twitch username, lowercase
+        login: xqc                  # twitch username
+      - platform: kick
+        login: adinross             # kick channel slug (kick.com/<slug>)
+      - platform: youtube
+        login: "@somecreator"       # youtube @handle, or a channel id starting with UC
     clip:
-      min_seconds: 15
+      min_seconds: 15               # the campaign's length rules
       max_seconds: 60
-    extra_hype_tokens: []           # words this streamer's chat spams on big moments
-    notes: "Paste the campaign rules here (hashtags, banned content, etc.)"
+    required_text: ["#ad"]          # hashtags/mentions the campaign requires; added to each caption.txt
+    layout: blur                    # blur | crop | facecam (empty = Studio's default)
+    extra_hype_tokens: []           # emotes/words this streamer's chat spams on big moments
+    notes: "Paste the campaign rules here (banned content, posting rules, etc.)"

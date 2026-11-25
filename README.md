@@ -1,86 +1,173 @@
 # Clipping
 
-Two tools for Content Rewards clipping campaigns:
+A two-part system for Content Rewards clipping campaigns:
 
-- **Watcher**: runs 24/7 on an Oracle VM, watches streams, and flags hype moments.
-- **Studio**: runs on your laptop, pulls those moments, and turns them into vertical clips with captions, filed by campaign. You upload manually.
+- **Watcher** runs 24/7 on an Oracle Cloud VM. It watches Twitch, Kick and YouTube Live streams, detects hype moments from chat and audio, keeps a rolling recording, and cuts a clip of every moment. A review dashboard lets you approve or reject each one, from your laptop or phone.
+- **Studio** runs on your laptop. It downloads approved clips, turns them into 9:16 vertical videos with word-by-word captions, and files them by campaign, ready for you to upload. It can also pull the best moments out of a finished VOD or podcast.
 
-Full plan: see "Build order" below. Each step can be used on its own before the next one starts.
+```
+Stream ──► Watcher (Oracle) ──► moment + clip ──► Dashboard: approve ──► Studio (laptop)
+                                                                          │
+                       Campaigns/<campaign>/ready/clip.mp4 + caption.txt ◄┘ ──► you upload
+```
 
-| Step | What | Status |
-|---|---|---|
-| 1 | Watcher core: Twitch chat → hype score → moments in SQLite | ✅ built |
-| 2 | Rolling stream recorder + clip cutter + audio loudness signal | ✅ built |
-| 3 | Review dashboard (approve/reject, assign campaign) + Twitch viewer-clip badge | next |
-| 4 | Studio: download, captions, 9:16, encode, campaign folders | |
-| 5 | Kick + YouTube Live | |
-| 6 | VOD mode | |
-| 7 | Oracle deploy scripts (systemd, cleanup, health) | |
+---
 
-## Try it
+## 1. Server setup (Oracle Cloud, one time)
 
-Requires Python 3.11+ and ffmpeg (`sudo apt install ffmpeg` on the Oracle VM, `brew install ffmpeg` on Mac).
+1. Create an **Ubuntu 22.04 or 24.04** VM. The free-tier *Ampere A1* (ARM, 4 cores, 24 GB RAM) works well. Give it a 100–200 GB boot volume.
+2. SSH in and run:
+   ```bash
+   git clone https://github.com/saad-designs/Clipping.git
+   cd Clipping
+   sudo bash deploy/oracle-setup.sh
+   ```
+   This installs ffmpeg and the Python packages, creates a `clipper` service user, installs to `/opt/clipping`, and starts the `clipping-watcher` service. It's safe to run again: to update later, `git pull` and run it again.
+3. **Private access with Tailscale.** This means you never open a port to the internet. On the VM:
+   ```bash
+   curl -fsSL https://tailscale.com/install.sh | sh
+   sudo tailscale up
+   tailscale ip -4          # note this 100.x.y.z address
+   ```
+   Install Tailscale on your laptop and phone, signed in to the same account.
+4. **Twitch API keys (free, strongly recommended).** Go to [dev.twitch.tv/console](https://dev.twitch.tv/console) → Register Your Application (name: anything, OAuth redirect: `http://localhost`, category: Other) → copy the Client ID and create a secret. Put both in `/opt/clipping/settings.yaml` under `twitch:`.
+   Without keys, the watcher can't tell who's live, so it keeps retrying every channel, and the "viewers clipped this" badge is off.
+5. Add your campaigns (next section), then `sudo systemctl restart clipping-watcher`.
+6. Open the dashboard: `http://<tailscale-ip>:8787/?token=<token>`. The setup script prints the full link. The token is in `/opt/clipping/data/api_token.txt`. After the first visit the token is kept in a cookie, so bookmark `http://<tailscale-ip>:8787/`.
+
+Logs: `journalctl -u clipping-watcher -f`
+
+## 2. Campaigns (`/opt/clipping/campaigns.yaml`)
+
+One entry per Content Rewards campaign. A campaign can cover several streamers on different platforms.
+
+```yaml
+campaigns:
+  - name: energy-drink-nov          # becomes Campaigns/energy-drink-nov/ on the laptop
+    active: true
+    channels:
+      - {platform: twitch,  login: xqc}
+      - {platform: kick,    login: adinross}
+      - {platform: youtube, login: "@somecreator"}   # @handle or UC... channel id
+    clip: {min_seconds: 15, max_seconds: 60}         # the campaign's length rules
+    required_text: ["#ad", "@brand"]                 # added to every caption.txt
+    layout: blur                                     # blur | crop | facecam
+    extra_hype_tokens: ["OMEGALUL", "ICANT"]         # this streamer's chat's own emotes
+    notes: "Paste the campaign's rules here"
+```
+After editing: `sudo systemctl restart clipping-watcher`.
+
+## 3. Reviewing on the dashboard
+
+Every detected moment appears as a card with its clip, which starts playing 5 seconds before the moment.
+
+| Key | Action |
+|---|---|
+| `J` / `K` | next / previous card |
+| `Space` | play from the moment |
+| `A` | approve: goes to the laptop for every highlighted campaign |
+| `R` | reject |
+
+Click a campaign chip to add or remove it before approving. **🎬 viewer clips** means Twitch viewers clipped the same moment themselves, a strong sign it's good. If viewers clip something the detector missed, it shows up as its own card with score 0.
+
+Review matters: detection catches when chat and audio spike, not whether the moment is actually funny. Thirty seconds of reviewing saves you posting weak clips.
+
+## 4. Laptop setup (Studio)
+
+Windows, Mac or Linux. Needs Python 3.11+ and ffmpeg.
+
+- **Windows:** install Python from python.org (tick "Add to PATH"), then `winget install Gyan.FFmpeg`
+- **Mac:** `brew install python ffmpeg`
 
 ```bash
-pip install -r requirements-watcher.txt     # pyyaml + streamlink
-cp settings.example.yaml settings.yaml
-cp campaigns.example.yaml campaigns.yaml     # add your campaign's streamers
-
-# Quick test with no config: watch two big live channels
-python -m watcher.app --channels kaicenat xqc
-
-# Real run (uses campaigns.yaml)
-python -m watcher.app
-
-# Chat only, no recording (uses almost no bandwidth)
-python -m watcher.app --no-record
-
-# Test recording/clipping with a local video instead of a live stream
-python -m watcher.app --channels anyname --fake-source some_video.ts
-
-# Tests
-python -m unittest -v
+git clone https://github.com/saad-designs/Clipping.git
+cd Clipping
+pip install -r requirements-studio.txt
+cp studio.example.yaml studio.yaml     # set server_url (Tailscale IP) and token
+python -m studio check                 # checks ffmpeg, encoder, whisper, server connection
+python -m studio run                   # leave running: downloads + edits approved clips every 3 min
 ```
 
-When a moment fires, it's printed and saved to `data/watcher.db`:
+What you get, per campaign:
 ```
-19:41:07 INFO watcher: 🔥 MOMENT #3  twitch:xqc  at 19:40:54  score=11.2  {'messages': 61, 'hype': 38, 'unique': 52, ...}
+Campaigns/energy-drink-nov/
+  inbox/        downloaded, waiting to be edited (inbox/done/ keeps the originals)
+  ready/        twitch_xqc_20261125_194054_14.mp4          ← upload this
+                twitch_xqc_20261125_194054_14.caption.txt  ← hook line from the transcript, streamer credit, required tags
+                twitch_xqc_20261125_194054_14.json         ← details (kept range, transcript…)
+  posted/       move clips here after uploading: python -m studio posted <file>
+  vods/         downloaded VODs (VOD mode)
 ```
-Open the VOD at that time and check whether it really was a moment. Doing this is how you tune the detector.
 
-### How detection works
-Chat is grouped into 5-second buckets. Each bucket is compared to the same channel's **last 10 minutes** (z-scores), so big and small streamers are judged fairly.
+**How each clip is edited:**
+- **Length:** `target_seconds` (default 35), kept inside the campaign's min/max. About 60% comes before the moment (build-up) and 40% after (reaction). Edges are moved so no word is cut in half.
+- **Layout:**
+  - `blur` (default): the full frame in the middle with a blurred copy filling the background. Works for anything.
+  - `crop`: center crop. Best for just-chatting and IRL streams.
+  - `facecam`: the webcam on top and the gameplay below. Set the rectangles per channel in `studio.yaml`.
+- **Captions:** faster-whisper transcribes the clip, and captions show 3 words at a time with the spoken word highlighted, placed above the TikTok/Reels/Shorts buttons. The first run downloads the whisper model (~500 MB for `small`).
+- **Encoding:** uses your GPU encoder automatically (NVIDIA, Intel, AMD or Apple), otherwise the CPU. Audio is normalized to -14 LUFS, the level short-form apps play at.
+
+Redo one clip with another layout: `python -m studio edit Campaigns/x/inbox/done/<file>.mp4 --layout crop` (move it back to `inbox/` first, or pass the path).
+
+## 5. VOD mode (finished streams, podcasts, any long video)
+
+```bash
+python -m studio vod "https://www.twitch.tv/videos/123456789" --campaign energy-drink-nov --top 8
+python -m studio vod "https://www.youtube.com/watch?v=..."     --campaign podcast-clips
+python -m studio vod ./recording.mp4                            --campaign podcast-clips
+```
+It downloads the video and scores every 5 seconds using:
+- **Chat replay** where it exists (Twitch VODs, YouTube past live streams).
+- **Audio loudness.**
+- **Hype words in the transcript**, when there's no chat.
+
+It keeps the best N moments at least 90 seconds apart, then edits them exactly like live clips.
+
+## 6. How detection works
+
+Chat is grouped into 5-second buckets. Each bucket is compared against the same channel's last 10 minutes (z-scores), so a 200-viewer stream and a 50k-viewer stream are judged fairly.
 
 | Signal | Why |
 |---|---|
-| Messages per bucket (max 2 per user) | Chat speeds up when something happens. The per-user cap stops one spammer from faking a surge. |
-| Hype messages (`KEKW`, `LMAO`, `W`, `?????`, `NOOOO`, `CLIP`, 💀…) | Shows chat is *reacting*, not just busy. A rise here is **required**, so raids, giveaways and bot spam alone don't fire. |
-| Unique chatters | Many people reacting is better than a few people reacting a lot. |
-| Audio loudness (recorded channels) | Boost only. Never fires a moment by itself. |
+| Messages per bucket (max 2 per person) | Chat speeds up when something happens. The cap stops one spammer from faking it. |
+| Hype messages (`KEKW`, `LMAO`, `W`, `?????`, `NOOOO`, 💀, "clip it"…) | Shows chat is **reacting**, not just busy. **Required**: raids, giveaways and bot spam alone never fire. |
+| Unique chatters | Many people reacting beats a few people reacting a lot. |
+| Audio loudness (recorded channels) | Boosts a moment, never fires one alone. Loud game sounds with a quiet chat are rarely a good clip. |
 
-The moment time is shifted back about 8 seconds because chat reacts after the event. Each 5-second bucket is scored 15 seconds after it ends, so that moment's audio has been recorded and can be included.
+The moment time is shifted back about 8 seconds, because chat reacts after the event. Clips are cut from the rolling buffer with about 35 seconds before and 20 seconds after.
 
-## Recording and clips (step 2)
+**Tuning** (`settings.yaml → scorer`):
+- Too many weak moments → raise `threshold` (try 7–9).
+- Missing obvious ones → lower it (try 4–5).
+- Each moment's raw numbers are on its card, so compare good and bad ones to see what to change.
 
-While a channel is live, the watcher keeps its last **10 minutes** on disk as 10-second files in `data/buffer/<channel>/`. Nothing is re-encoded, so each stream uses almost no CPU. When a moment fires, it waits ~20 seconds for the footage after the moment, then saves a clip:
+## 7. Capacity (Oracle free tier)
 
+Each recorded stream uses about 6 Mbps download, ~450 MB of disk for the 10-minute buffer, and 2–5% of one CPU core, because nothing is re-encoded on the server. Expect **15–25 recorded streams** at once. Channels beyond `recorder.max_concurrent` (default 20) are still watched through chat, but without clips. Chat-only monitoring is nearly free, so you can watch far more channels that way.
+
+If free disk drops below `min_free_gb` (default 15), new recordings pause and old clips are pruned in this order: rejected first, then downloaded, then unreviewed. Approved clips are pruned last. Clips are deleted after 3 days anyway.
+
+## 8. Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Dashboard won't load | Is Tailscale connected on both devices? Is the service running? Check `systemctl status clipping-watcher`. |
+| "bad or missing token" | Open the link with `?token=` again; the token is in `/opt/clipping/data/api_token.txt`. |
+| YouTube: no recording / "confirm you're not a bot" | YouTube blocks many cloud IPs. Export `cookies.txt` from a logged-in browser (e.g. the "Get cookies.txt LOCALLY" extension), copy it to the VM, and set `youtube.cookies_file` in settings.yaml. |
+| Kick chat or live status not working | Kick's Cloudflare sometimes blocks cloud IPs. Check the logs for `kick API failed`. If Kick changed its chat key, update `kick.pusher_key`. |
+| A platform keeps blocking the VM | Run a second Watcher on your laptop for just those channels: same code, its own `campaigns.yaml`, `python -m watcher.app --root <folder>`. |
+| Clips have no captions | `python -m studio check`. Captions need `faster-whisper` and a one-time model download. |
+| Captions too small or too low | `studio.yaml → captions.size / position` |
+
+## Development
+
+```bash
+pip install -r requirements-watcher.txt -r requirements-studio.txt
+python -m unittest -v                  # needs ffmpeg; no internet needed
+python -m watcher.app --channels anyname --fake-source some_video.ts   # local test without a live stream
 ```
-data/clips/twitch_xqc/14_20261125_194054.mp4    ← about 55–65s: ~35s before the moment, ~20s after
-```
-`clip_path` in the DB points to it. Clips are cut on 10-second boundaries, so they run a bit long on purpose. The laptop app (step 4) trims each one to the campaign's length when it edits.
 
-**Audio loudness** from the recording is added to the hype score: screaming, a big reaction, music dropping. It only **boosts** a moment chat is already reacting to. It can never fire one on its own, because loud game sounds with a silent chat are almost never a good clip.
+Layout: `watcher/` (server), `studio/` (laptop), `shared/` (config, hype words), `deploy/` (Oracle setup), `tests/`.
 
-**Resource use per recorded stream:** ~6 Mbps download, ~450 MB disk for the buffer, ~2–5% of one CPU core. On Oracle's free tier (4 ARM cores, 200 GB), 15–25 streams should fit. Above `max_concurrent` (default 20), extra channels stay chat-only. Use `quality: "720p60,best"` to save bandwidth, but 1080p gives a sharper 9:16 crop.
-
-**Twitch API keys are strongly recommended now.** Without them, the watcher doesn't know who's live, so it retries streamlink for every channel every 2 minutes. With keys, it records only live channels and stops when they go offline.
-
-**Cleanup:** buffer files older than 10 minutes are deleted automatically, unless a pending clip still needs them. Clips are deleted after `clip_retention_days` (default 3), by which point the laptop should have downloaded them.
-
-### Tuning (`settings.yaml → scorer`)
-- Too many weak moments → raise `threshold` (try 7–9) or `min_hype_z`.
-- Missing obvious moments → lower `threshold` (try 4–5).
-- A streamer's chat has its own emotes → add them to that campaign's `extra_hype_tokens`.
-
-### Optional: Twitch API keys
-Create an app at dev.twitch.tv/console (free) and put `client_id`/`client_secret` in `settings.yaml`. This adds live/offline detection. Recording starts and stops with the stream, the baseline resets between streams, and offline chat is ignored.
+The Kick and YouTube chat readers and Twitch's VOD chat replay use those sites' unofficial web endpoints. They work today but can break when a site changes. The parsing code for each is isolated in one function per format (`parse_*`) with tests, so a fix is small.
