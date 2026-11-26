@@ -11,6 +11,8 @@ Stream ──► Watcher (Oracle) ──► moment + clip ──► Dashboard: a
                        Campaigns/<campaign>/ready/clip.mp4 + caption.txt ◄┘ ──► you upload
 ```
 
+**First time? Follow [TESTING.md](TESTING.md) phase by phase: laptop first, then Oracle.**
+
 ---
 
 ## 1. Server setup (Oracle Cloud, one time)
