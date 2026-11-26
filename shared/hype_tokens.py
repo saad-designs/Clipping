@@ -32,3 +32,13 @@ def is_hype(message: str, extra: set[str] | frozenset[str] = frozenset()) -> boo
             return True
     # multi-word tokens
     return any(" " in t and t in upper for t in tokens)
+
+
+# Chat bots and commands aren't reactions: leave them out of every count.
+BOTS = {"nightbot", "streamelements", "streamlabs", "moobot", "fossabot", "wizebot", "botrixoficial",
+        "kickbot", "sery_bot", "soundalerts", "pokemoncommunitygame", "blerp", "own3d", "frostytoolsdotcom"}
+
+
+def is_noise(user: str, text: str) -> bool:
+    u = user.lower()
+    return text.startswith("!") or u in BOTS or u.endswith("bot")

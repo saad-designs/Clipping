@@ -11,7 +11,9 @@ Stream ──► Watcher (Oracle) ──► moment + clip ──► Dashboard: a
                        Campaigns/<campaign>/ready/clip.mp4 + caption.txt ◄┘ ──► you upload
 ```
 
-**First time? Follow [TESTING.md](TESTING.md) phase by phase: laptop first, then Oracle.**
+**New here? Follow [ORACLE_SETUP.md](ORACLE_SETUP.md): click-by-click setup for the Oracle server and your Windows PC. On Windows, everything runs from double-click files in the `windows` folder.**
+
+Results of real-world tests: [TEST_REPORT.md](TEST_REPORT.md). Deeper testing checklist: [TESTING.md](TESTING.md).
 
 ---
 

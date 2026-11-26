@@ -30,6 +30,14 @@ echo "==> Python packages"
 "$APP/venv/bin/pip" install -q -r "$APP/requirements-watcher.txt"
 chown -R "$USER_NAME:$USER_NAME" "$APP"
 
+echo "==> Firewall"
+# Oracle's Ubuntu images reject all incoming traffic except SSH. Allow traffic that arrives over
+# Tailscale only (your own devices); nothing is opened to the public internet.
+if command -v iptables >/dev/null 2>&1; then
+  iptables -C INPUT -i tailscale0 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -i tailscale0 -j ACCEPT
+  if command -v netfilter-persistent >/dev/null 2>&1; then netfilter-persistent save >/dev/null 2>&1 || true; fi
+fi
+
 echo "==> systemd service"
 install -m 644 "$SRC/deploy/clipping-watcher.service" /etc/systemd/system/clipping-watcher.service
 systemctl daemon-reload

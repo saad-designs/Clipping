@@ -34,12 +34,26 @@ def _model(name: str):
     return _models[name]
 
 
+def load_audio(path) -> "np.ndarray":
+    """16 kHz mono float audio via ffmpeg. faster-whisper's own decoder (PyAV) breaks when
+    pip installs a newer PyAV than it expects, so we don't rely on it."""
+    import subprocess
+
+    import numpy as np
+    raw = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", "16000",
+                          "-f", "f32le", "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, dtype=np.float32)
+
+
 def transcribe(path, model: str = "small", language: str | None = None) -> list[Word]:
     if not available():
         log.warning("faster-whisper not installed: no captions (pip install faster-whisper)")
         return []
     try:
-        segments, _info = _model(model).transcribe(str(path), language=language, word_timestamps=True,
+        audio = load_audio(path)
+        if audio.size == 0:
+            return []
+        segments, _info = _model(model).transcribe(audio, language=language, word_timestamps=True,
                                                    vad_filter=True, beam_size=5)
         return [Word(w.start, w.end, w.word.strip()) for s in segments for w in (s.words or []) if w.word.strip()]
     except Exception as e:   # a missing model download, a corrupt file: still make the clip

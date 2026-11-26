@@ -1,0 +1,63 @@
+@echo off
+REM One-time setup for the Clipping Studio on Windows. Double-click this file.
+setlocal
+cd /d "%~dp0.."
+echo.
+echo === Clipping Studio setup ===
+echo This installs Python, ffmpeg and Git (if missing), then the Studio's Python packages.
+echo.
+
+where winget >nul 2>nul
+if errorlevel 1 (
+  echo winget is missing. Install "App Installer" from the Microsoft Store, then run this again.
+  pause
+  exit /b 1
+)
+
+REM "where python" is fooled by the Microsoft Store shortcut, so actually run it.
+python --version >nul 2>nul
+if errorlevel 1 (
+  echo Installing Python...
+  winget install -e --id Python.Python.3.12 --scope user --accept-package-agreements --accept-source-agreements
+)
+where ffmpeg >nul 2>nul
+if errorlevel 1 (
+  echo Installing ffmpeg...
+  winget install -e --id Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
+)
+where git >nul 2>nul
+if errorlevel 1 (
+  echo Installing Git...
+  winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements
+)
+
+REM New installs only show up in a fresh window's PATH.
+python --version >nul 2>nul
+if errorlevel 1 (
+  echo.
+  echo Python was just installed. Close this window and double-click setup.bat once more.
+  pause
+  exit /b 0
+)
+
+echo Installing Studio packages (this can take a few minutes)...
+python -m pip install --upgrade pip
+python -m pip install -r requirements-studio.txt
+if errorlevel 1 (
+  echo.
+  echo Package install failed. Send the text above to Claude.
+  pause
+  exit /b 1
+)
+
+if not exist studio.yaml copy studio.example.yaml studio.yaml >nul
+echo.
+echo ==========================================================
+echo  Almost done. Notepad will open studio.yaml.
+echo  Fill in these two lines, then save (Ctrl+S) and close:
+echo    server_url: "http://YOUR-SERVER-TAILSCALE-IP:8787"
+echo    token: "THE-TOKEN-YOUR-SERVER-PRINTED"
+echo  Then double-click "Check setup.bat".
+echo ==========================================================
+notepad studio.yaml
+pause

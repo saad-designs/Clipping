@@ -2,8 +2,8 @@ import random
 import unittest
 
 from shared.config import ScorerConfig
-from shared.hype_tokens import is_hype
-from watcher.platforms.twitch import parse_privmsg
+from shared.hype_tokens import is_hype, is_noise
+from watcher.platforms.twitch import parse_privmsg, split_frame
 from watcher.scorer import ChannelScorer
 
 
@@ -60,10 +60,20 @@ class ParsingTests(unittest.TestCase):
         for s in ["what are we doing today", "Wednesday", "is this live?"]:
             self.assertFalse(is_hype(s), s)
 
+    def test_bots_and_commands_ignored(self):
+        self.assertTrue(is_noise("Nightbot", "Check out my YouTube"))
+        self.assertTrue(is_noise("viewer", "!uptime"))
+        self.assertTrue(is_noise("SomeChannelBot", "hi"))
+        self.assertFalse(is_noise("viewer", "KEKW"))
+
     def test_privmsg(self):
         self.assertEqual(parse_privmsg(":bob!bob@bob.tmi.twitch.tv PRIVMSG #xqc :KEKW that was nuts"),
                          ("xqc", "bob", "KEKW that was nuts"))
         self.assertIsNone(parse_privmsg("PING :tmi.twitch.tv"))
+
+    def test_websocket_frame_with_several_lines(self):
+        frame = ":a!a@a.tmi.twitch.tv PRIVMSG #x :W\r\n:b!b@b.tmi.twitch.tv PRIVMSG #x :L\r\n"
+        self.assertEqual([parse_privmsg(l) for l in split_frame(frame)], [("x", "a", "W"), ("x", "b", "L")])
 
 
 if __name__ == "__main__":

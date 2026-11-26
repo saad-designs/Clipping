@@ -1,4 +1,4 @@
-"""Twitch: anonymous chat over IRC plus optional live-status checks via Helix.
+"""Twitch: anonymous chat (IRC over websocket) plus optional live-status checks via Helix.
 
 Chat needs no account: Twitch allows read-only anonymous logins (justinfanNNNN).
 One connection can join many channels, so monitoring 100 chats is cheap.
@@ -38,8 +38,17 @@ def parse_privmsg(line: str) -> tuple[str, str, str] | None:
     return channel, user, text
 
 
+def split_frame(frame: str | bytes) -> list[str]:
+    """One websocket frame can carry several IRC lines separated by CRLF."""
+    if isinstance(frame, bytes):
+        frame = frame.decode("utf-8", "replace")
+    return [l for l in frame.split("\r\n") if l]
+
+
 class TwitchChat:
-    HOST, PORT = "irc.chat.twitch.tv", 6697
+    # Twitch's chat over a websocket on port 443: same IRC lines as port 6697, but it passes
+    # through firewalls and HTTPS proxies (websockets uses HTTPS_PROXY automatically).
+    URL = "wss://irc-ws.chat.twitch.tv:443"
 
     def __init__(self, logins: list[str], on_message: ChatHandler, on_connect: Callable[[bool], None] | None = None):
         self.logins = logins
@@ -52,42 +61,36 @@ class TwitchChat:
             try:
                 await self._session()
                 backoff = 1
-            except (OSError, asyncio.IncompleteReadError, ConnectionError) as e:
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:   # network errors, closed sockets, handshake failures
                 log.warning("chat disconnected (%s); retrying in %ss", e, backoff)
             self.on_connect(False)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 
     async def _session(self) -> None:
-        reader, writer = await asyncio.open_connection(self.HOST, self.PORT, ssl=True)
-        nick = f"justinfan{random.randint(10000, 99999)}"
-        writer.write(f"NICK {nick}\r\n".encode())
-        # Twitch rate-limits JOINs (~20 per 10s for anonymous users); pace them.
-        for i, login in enumerate(self.logins):
-            writer.write(f"JOIN #{login}\r\n".encode())
-            if i % 15 == 14:
-                await writer.drain()
-                await asyncio.sleep(11)
-        await writer.drain()
-        log.info("joined %d twitch chats", len(self.logins))
-        self.on_connect(True)
-        try:
-            while True:
-                raw = await reader.readline()
-                if not raw:
-                    raise ConnectionError("server closed connection")
-                line = raw.decode("utf-8", "replace").rstrip("\r\n")
-                if line.startswith("PING"):
-                    writer.write(line.replace("PING", "PONG", 1).encode() + b"\r\n")
-                    await writer.drain()
-                    continue
-                msg = parse_privmsg(line)
-                if msg:
-                    res = self.on_message(msg[0], time.time(), msg[1], msg[2])
-                    if asyncio.iscoroutine(res):
-                        await res
-        finally:
-            writer.close()
+        import websockets
+        async with websockets.connect(self.URL, ping_interval=60, max_size=2 ** 22) as ws:
+            await ws.send(f"NICK justinfan{random.randint(10000, 99999)}")
+            # Twitch rate-limits JOINs (~20 per 10s for anonymous users); pace them.
+            for i, login in enumerate(self.logins):
+                await ws.send(f"JOIN #{login}")
+                if i % 15 == 14:
+                    await asyncio.sleep(11)
+            log.info("joined %d twitch chats", len(self.logins))
+            self.on_connect(True)
+            async for frame in ws:
+                for line in split_frame(frame):
+                    if line.startswith("PING"):
+                        await ws.send(line.replace("PING", "PONG", 1))
+                        continue
+                    msg = parse_privmsg(line)
+                    if msg:
+                        res = self.on_message(msg[0], time.time(), msg[1], msg[2])
+                        if asyncio.iscoroutine(res):
+                            await res
+            raise ConnectionError("server closed connection")
 
 
 class TwitchHelix:

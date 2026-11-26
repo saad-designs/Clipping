@@ -176,6 +176,22 @@ class VodTests(unittest.TestCase):
                                       "message": {"fragments": [{"text": "KEKW "}, {"text": "W"}]}}}]}}}}
         self.assertEqual(vod.parse_twitch_comments(page), ([(12.0, "a", "KEKW W")], "c1"))
 
+    def test_twitch_chat_pages_by_offset(self):
+        # fake VOD: one comment every 2s from 0 to 300s; each "page" returns 5 comments from the
+        # requested second, starting a little earlier like the real API does
+        comments = [(float(t), f"u{t}", "hi") for t in range(0, 300, 2)]
+        calls = []
+
+        def fetch(_vid, offset):
+            calls.append(offset)
+            page = [c for c in comments if c[0] >= offset - 3][:5]
+            return {"data": {"video": {"comments": {"pageInfo": {"hasNextPage": True}, "edges": [
+                {"cursor": "x", "node": {"contentOffsetSeconds": c[0], "commenter": {"displayName": c[1]},
+                                         "message": {"fragments": [{"text": c[2]}]}}} for c in page]}}}}
+        got = vod.twitch_chat("1", start=10, end=200, fetch=fetch)
+        self.assertEqual(got, [c for c in comments if 10 <= c[0] <= 200])   # complete, no duplicates
+        self.assertEqual(calls, sorted(calls))                               # always moves forward
+
     def test_chat_scoring_finds_spike(self):
         import random
         rng = random.Random(4)

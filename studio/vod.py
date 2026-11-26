@@ -84,28 +84,46 @@ def parse_twitch_comments(page: dict) -> tuple[list[tuple[float, str, str]], str
     return out, cursor
 
 
-def twitch_chat(video_id: str, max_pages: int = 5000) -> list[tuple[float, str, str]]:
-    """Twitch VOD chat via Twitch's web GQL. Unofficial: returns [] if Twitch blocks it."""
-    msgs, cursor, first = [], None, True
-    for _ in range(max_pages):
-        variables = {"videoID": video_id, **({"cursor": cursor} if cursor else {"contentOffsetSeconds": 0})}
-        body = [{"operationName": "VideoCommentsByOffsetOrCursor", "variables": variables,
-                 "extensions": {"persistedQuery": {"version": 1, "sha256Hash": TWITCH_COMMENTS_HASH}}}]
-        req = urllib.request.Request("https://gql.twitch.tv/gql", data=json.dumps(body).encode(),
-                                     headers={"Client-Id": TWITCH_GQL_CLIENT, "Content-Type": "application/json"})
+def _twitch_comments_page(video_id: str, offset: int) -> dict:
+    body = [{"operationName": "VideoCommentsByOffsetOrCursor",
+             "variables": {"videoID": video_id, "contentOffsetSeconds": offset},
+             "extensions": {"persistedQuery": {"version": 1, "sha256Hash": TWITCH_COMMENTS_HASH}}}]
+    req = urllib.request.Request("https://gql.twitch.tv/gql", data=json.dumps(body).encode(),
+                                 headers={"Client-Id": TWITCH_GQL_CLIENT, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.load(r)[0]
+
+
+def twitch_chat(video_id: str, start: int = 0, end: int | None = None, max_pages: int = 20000,
+                fetch=_twitch_comments_page) -> list[tuple[float, str, str]]:
+    """Twitch VOD chat via Twitch's web GQL. Unofficial: returns what it got if Twitch blocks it.
+
+    Pages by time offset: Twitch blocks anonymous cursor paging ("failed integrity check"),
+    but offset queries still work. Each page holds ~50-60 comments from the requested second
+    on; in extremely busy chats a few messages per second can be skipped, which doesn't
+    change where the spikes are.
+    """
+    msgs, seen, offset = [], set(), start
+    for i in range(max_pages):
         try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                page = json.load(r)[0]
+            batch, _ = parse_twitch_comments(fetch(video_id, offset))
         except Exception as e:
-            if first:
+            if i == 0:
                 log.warning("twitch chat replay unavailable (%s); using audio only", e)
             break
-        first = False
-        batch, cursor = parse_twitch_comments(page)
-        msgs += batch
-        if not cursor:
+        for m in batch:
+            if m not in seen and m[0] >= start and (end is None or m[0] <= end):
+                seen.add(m)
+                msgs.append(m)
+        last = max((m[0] for m in batch), default=-1)
+        if last < offset:          # nothing at or after this second: end of the VOD
             break
-    return msgs
+        offset = int(last) + 1
+        if end is not None and offset > end:
+            break
+        if i and i % 200 == 0:
+            log.info("chat replay: %d messages, up to %d min", len(msgs), offset // 60)
+    return sorted(msgs)
 
 
 # ---------- scoring ----------------------------------------------------------------

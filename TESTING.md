@@ -1,5 +1,7 @@
 # Testing guide
 
+> **Just want to get it running?** Use [ORACLE_SETUP.md](ORACLE_SETUP.md) instead. This page is the detailed checklist for checking each part separately.
+
 Each phase below adds one new thing, so when something breaks we know exactly where.
 
 **Why test on your laptop first, before Oracle:** if a stream fails on Oracle, it could be broken code *or* Oracle's IP being blocked. Running the same thing first from your home internet separates the two.

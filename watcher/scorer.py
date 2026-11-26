@@ -17,7 +17,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from shared.config import ScorerConfig
-from shared.hype_tokens import is_hype
+from shared.hype_tokens import is_hype, is_noise
 
 
 @dataclass
@@ -81,6 +81,8 @@ class ChannelScorer:
 
     def add_message(self, ts: float, user: str, text: str) -> list[Moment]:
         fired = self.tick(ts)
+        if is_noise(user, text):   # bots and !commands
+            return fired
         start = self._bucket_start(ts)
         if self.next_close is None:
             self.next_close = start
