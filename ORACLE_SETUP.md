@@ -1,4 +1,6 @@
-# Setup, step by step (Windows + Oracle)
+# Optional: a 24/7 server (Oracle or any VPS)
+
+> **Start with [SETUP.md](SETUP.md).** It runs everything on your PC for free. Use this guide later only if you want clipping to run while your PC is off. Oracle needs a card for verification; any small Ubuntu VPS works the same way.
 
 There are three parts:
 - **A.** the server on Oracle (watches streams 24/7)

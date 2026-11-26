@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Callable
 
-from watcher.cutter import list_segments, safe_name
+from watcher.cutter import SEGMENT_PATTERN, list_segments, safe_name
 
 log = logging.getLogger("recorder")
 
@@ -69,34 +68,54 @@ class Recorder:
             await asyncio.sleep(wait)
 
     async def _run_once(self) -> None:
-        r, w = os.pipe()
+        # streamlink -> (copied by us) -> ffmpeg. A plain copy loop instead of an OS pipe works the same
+        # on Windows, macOS and Linux; at a few Mbps it costs almost no CPU.
         src = await asyncio.create_subprocess_exec(
-            *self.source_cmd(self.channel), stdout=w, stderr=asyncio.subprocess.DEVNULL)
+            *self.source_cmd(self.channel), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         ff = await asyncio.create_subprocess_exec(
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
             "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy",
             "-f", "segment", "-segment_time", str(self.seg), "-reset_timestamps", "1",
-            "-strftime", "1", str(self.dir / "%s.ts"),
-            stdin=r, stderr=asyncio.subprocess.DEVNULL)
-        os.close(r)
-        os.close(w)
+            "-strftime", "1", str(self.dir / f"{SEGMENT_PATTERN}.ts"),
+            stdin=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         log.info("%s: recording", self.channel)
+
+        async def pump() -> None:
+            try:
+                while True:
+                    chunk = await src.stdout.read(1 << 16)
+                    if not chunk:
+                        break
+                    ff.stdin.write(chunk)
+                    await ff.stdin.drain()
+            except (ConnectionError, BrokenPipeError):
+                pass
+            finally:
+                try:
+                    ff.stdin.close()
+                except Exception:
+                    pass
+
+        tasks = [asyncio.create_task(pump()), asyncio.create_task(src.wait()), asyncio.create_task(ff.wait())]
         try:
-            waiters = {asyncio.create_task(src.wait()), asyncio.create_task(ff.wait())}
             while True:
-                done, _ = await asyncio.wait(waiters, timeout=1)
+                done, _ = await asyncio.wait(tasks[1:], timeout=1)
                 self._flush()
                 if done:
                     break
         finally:
             for p in (src, ff):
                 if p.returncode is None:
-                    p.terminate()
+                    try:
+                        p.terminate()
+                    except ProcessLookupError:
+                        pass
             for p in (src, ff):
                 try:
                     await asyncio.wait_for(p.wait(), 5)
                 except asyncio.TimeoutError:
                     p.kill()
+            tasks[0].cancel()
 
     def _flush(self, final: bool = False) -> None:
         """Report segments that are complete (a newer one exists, or recording ended)."""

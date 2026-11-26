@@ -66,8 +66,9 @@ class Worker:
         while not self._stop.is_set():
             s = self.store.settings()
             if s.get("server_url") and time.time() >= next_sync:
-                self.sync_once()
-                next_sync = time.time() + float(s.get("poll_minutes") or 3) * 60
+                r = self.sync_once()
+                # a failed check (e.g. the watcher on this PC is still starting) is retried soon
+                next_sync = time.time() + (20 if r.get("error") else float(s.get("poll_minutes") or 3) * 60)
             if self.jobs:
                 self._run_job(self.jobs.pop(0))
                 continue

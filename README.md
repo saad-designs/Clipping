@@ -2,7 +2,7 @@
 
 A two-part system for Content Rewards clipping campaigns:
 
-- **Watcher** runs 24/7 on an Oracle Cloud VM. It watches Twitch, Kick and YouTube Live streams, detects hype moments from chat and audio, keeps a rolling recording, and cuts a clip of every moment. Its own dashboard shows what it is watching and recording.
+- **Watcher** runs on your PC, started and managed by Studio (or 24/7 on a rented server later). It watches Twitch, Kick and YouTube Live streams, detects hype moments from chat and audio, keeps a rolling recording, and cuts a clip of every moment. Its own dashboard shows what it is watching and recording.
 - **Studio** runs on your PC as a dashboard in the browser (http://localhost:8790). You set up each campaign there: brief, streamers, logo, rules. It pulls every captured moment, and a **director** plans each edit. The free built-in one works out what kind of moment it is from chat, speech and audio; Claude (paid) can take over later from Settings. It decides: facecam on top / game below, big animated captions, a hook title, zoom and sound hits on the moment, logo, and the post caption, with a different style per clip. You approve the final edit in **Review**, then upload from **Ready to upload**. It can also pick the best moments out of a VOD or any long video.
 
 ```
@@ -11,7 +11,7 @@ Stream ──► Watcher (Oracle) ──► captured clip ──► Studio (PC):
                          Campaigns/<campaign>/ready/clip.mp4 + caption.txt  ◄─────────────────┘ ──► you upload
 ```
 
-**New here? Follow [ORACLE_SETUP.md](ORACLE_SETUP.md): click-by-click setup for the Oracle server and your Windows PC. On Windows, everything runs from double-click files in the `windows` folder.**
+**New here? Follow [SETUP.md](SETUP.md): everything runs free on your Windows PC, with one double-click to start. Renting a server later is optional ([ORACLE_SETUP.md](ORACLE_SETUP.md)).**
 
 Results of real-world tests: [TEST_REPORT.md](TEST_REPORT.md). Deeper testing checklist: [TESTING.md](TESTING.md).
 

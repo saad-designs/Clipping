@@ -13,6 +13,9 @@ SETTING_DEFAULTS = {
     "server_url": "", "token": "", "anthropic_api_key": "", "model": "claude-opus-5-5", "effort": "medium",
     "director": "free", "encoder": "auto", "whisper_model": "small", "language": None, "poll_minutes": 3,
     "output_dir": "Campaigns",
+    # one-PC mode: the stream watcher runs on this PC, started by Studio
+    "local_watcher": True, "local_token": "", "twitch_client_id": "", "twitch_client_secret": "",
+    "max_recording": 3, "quality": "720p",
 }
 
 CAMPAIGN_DEFAULTS = {
@@ -71,7 +74,10 @@ class Store:
     def settings(self) -> dict:
         with self.lock:
             rows = {r["key"]: json.loads(r["value"]) for r in self.db.execute("SELECT * FROM settings")}
-        return {**SETTING_DEFAULTS, **rows}
+        s = {**SETTING_DEFAULTS, **rows}
+        if s.get("local_watcher"):      # the watcher runs on this PC: talk to it directly
+            s["server_url"], s["token"] = "http://127.0.0.1:8787", s.get("local_token", "")
+        return s
 
     def save_settings(self, values: dict) -> dict:
         with self.lock:

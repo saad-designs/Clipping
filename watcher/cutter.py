@@ -16,13 +16,27 @@ from pathlib import Path
 log = logging.getLogger("cutter")
 
 
+SEGMENT_PATTERN = "%Y%m%d-%H%M%S"   # ffmpeg -strftime name; Windows' strftime has no %s (Unix time)
+
+
+def segment_start(name: str) -> float | None:
+    """Unix start time from a segment file name: '20261126-181502' (local time) or '1795716902'."""
+    try:
+        return time.mktime(time.strptime(name, SEGMENT_PATTERN))
+    except ValueError:
+        pass
+    try:
+        return float(name)
+    except ValueError:
+        return None
+
+
 def list_segments(seg_dir: Path) -> list[tuple[float, Path]]:
     out = []
     for p in seg_dir.glob("*.ts"):
-        try:
-            out.append((float(p.stem), p))
-        except ValueError:
-            continue
+        start = segment_start(p.stem)
+        if start is not None:
+            out.append((start, p))
     return sorted(out)
 
 

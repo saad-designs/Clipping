@@ -29,6 +29,7 @@ from watcher.recorder import RecorderPool, SourceCmd, fake_cmd
 from watcher.scorer import ChannelScorer, Moment
 
 log = logging.getLogger("watcher")
+RESTART_EXIT_CODE = 3   # "restart me": used on Windows after campaigns change
 
 
 class Watcher:
@@ -317,6 +318,8 @@ def main() -> None:
         return
     if holder.get("w") and holder["w"].restart:
         log.info("campaigns changed: restarting")
+        if sys.platform == "win32":
+            sys.exit(RESTART_EXIT_CODE)    # Clipping Studio relaunches it (execv is unreliable on Windows)
         os.execv(sys.executable, [sys.executable, "-m", "watcher.app", *sys.argv[1:]])
 
 

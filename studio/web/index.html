@@ -133,7 +133,7 @@ details summary { cursor: pointer; color: var(--muted); font-weight: 600; font-s
     <a href="#ready" data-page="ready">Ready to upload <span class="n" id="n-ready">0</span></a>
     <a href="#queue" data-page="queue">Queue <span class="n" id="n-queue">0</span></a>
     <a href="#campaigns" data-page="campaigns">Campaigns</a>
-    <a href="#server" data-page="server">Server</a>
+    <a href="#server" data-page="server">Stream watcher</a>
     <a href="#prefs" data-page="prefs">Settings</a>
     <div class="status" id="status"><span class="dot"></span>Starting…</div>
   </nav>
@@ -301,11 +301,11 @@ async function renderCampaigns() {
   const c = campaigns.find((x) => x.slug === editing) || (editing === "new" ? null : campaigns[0]);
   if (c && !editing) editing = c.slug;
   $("#main").innerHTML = `<h1>Campaigns</h1>
-    <p class="sub">One per Content Rewards campaign. Paste the brief, add the streamers and any logo or required clips; the director follows it for every edit. Save, then send the channels to the server.</p>
+    <p class="sub">One per Content Rewards campaign. Paste the brief, add the streamers and any logo or required clips; the director follows it for every edit. Saving updates the stream watcher automatically.</p>
     <div class="grid2"><div class="clist">
       ${campaigns.map((x) => `<button data-slug="${x.slug}" aria-pressed="${x.slug === editing}"><span>${esc(x.name)}</span><span class="pill ${x.active ? "good" : ""}">${x.active ? "Active" : "Paused"}</span></button>`).join("")}
       <button data-slug="new" aria-pressed="${editing === "new" || !campaigns.length}">+ New campaign</button>
-      <button class="primary" id="push" ${campaigns.length ? "" : "disabled"}>Send channels to server</button>
+      <button class="primary" id="push" ${campaigns.length ? "" : "disabled"}>Restart watcher with these streamers</button>
     </div>${campaignForm(editing === "new" || !campaigns.length ? null : c)}</div>`;
 }
 function chanRow(ch = { platform: "twitch", login: "", facecam: "auto" }, i) {
@@ -394,17 +394,23 @@ function openPicker(row) {
 
 /* ---------- server ---------- */
 async function renderServer() {
-  $("#main").innerHTML = `<h1>Server</h1><p class="sub">Your Oracle server watches the streams and captures hype moments.</p><div class="empty">Checking…</div>`;
-  const h = await api("/api/server/health");
-  if (!h.connected) { $("#main").innerHTML = `<h1>Server</h1><div class="empty"><b>Not connected.</b><br>${esc(h.error)}<br><br><a href="#prefs">Open Settings</a></div>`; return; }
-  $("#main").innerHTML = `<h1>Server</h1>
+  $("#main").innerHTML = `<h1>Stream watcher</h1><div class="empty">Checking…</div>`;
+  const [lw, h] = await Promise.all([api("/api/local-watcher"), api("/api/server/health")]);
+  const logBox = lw.enabled ? `<details style="margin-top:16px"><summary>Watcher log (last lines)</summary><pre style="white-space:pre-wrap;font:12px var(--font-data);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;max-height:360px;overflow:auto">${esc(lw.log || "(empty)")}</pre></details>` : "";
+  const intro = lw.enabled
+    ? (lw.waiting ? `<div class="empty"><b>Waiting for a campaign.</b><br>Add a campaign with at least one streamer in <a href="#campaigns">Campaigns</a>; the watcher starts by itself.</div>`
+       : lw.running ? `<p class="sub"><span class="pill good">Running on this PC</span> for ${Math.round(lw.uptime_s / 60)} min${lw.restarts ? ` · restarted ${lw.restarts}×` : ""}</p>`
+       : `<p class="sub"><span class="pill warn">Starting…</span> ${lw.last_exit != null ? `(last exit code ${lw.last_exit}; see the log below)` : ""}</p>`)
+    : `<p class="sub">Your server watches the streams and captures hype moments.</p>`;
+  if (!h.connected) { $("#main").innerHTML = `<h1>Stream watcher</h1>${intro}${lw.enabled && lw.waiting ? "" : `<div class="empty"><b>Not connected yet.</b><br>${esc(h.error)}${lw.enabled ? "" : `<br><br><a href="#prefs">Open Settings</a>`}</div>`}${logBox}`; return; }
+  $("#main").innerHTML = `<h1>Stream watcher</h1>${intro}
     <p class="sub">${h.recording}/${h.max_recording} streams recording · ${h.disk_free_gb} GB free${h.low_disk ? " · <b>disk almost full, recording paused</b>" : ""}</p>
     <div class="actions" style="margin-bottom:14px"><button id="syncnow" class="primary">Check for new captures now</button></div>
     <div class="scroll"><table class="table"><thead><tr><th>Streamer</th><th>Live</th><th>Recording</th><th>Chat</th><th>Moments this hour</th><th>Campaigns</th></tr></thead><tbody>
     ${h.channels.map((c) => `<tr><td><b>${esc(c.channel)}</b><div style="font-size:12px;color:var(--muted)">${esc(c.title || "")}</div></td>
       <td>${c.live === null ? `<span class="pill">Unknown</span>` : c.live ? `<span class="pill bad">● Live</span>` : `<span class="pill">Offline</span>`}</td>
       <td>${c.recording ? `<span class="pill good">Yes</span>` : "No"}</td><td>${c.chat ? "Connected" : "–"}</td><td>${c.moments_1h}</td><td>${esc(c.campaigns.join(", "))}</td></tr>`).join("")}
-    </tbody></table></div>`;
+    </tbody></table></div>${logBox}`;
 }
 
 /* ---------- settings ---------- */
@@ -412,9 +418,20 @@ async function renderPrefs() {
   const s = await api("/api/settings");
   $("#main").innerHTML = `<h1>Settings</h1><p class="sub">Saved on this PC only.</p>
   <form id="sform" class="card" style="max-width:760px">
-    <h2>Oracle server</h2>
-    <div class="row"><label style="flex:2 1 260px">Server address <input name="server_url" value="${esc(s.server_url)}" placeholder="http://100.x.y.z:8787"></label>
-      <label>Token <input name="token" value="${esc(s.token)}" placeholder="from the server"></label></div>
+    <h2>Stream watcher</h2>
+    <p class="sub" style="margin:0">The watcher follows your streamers' chats and records their streams to catch the hype moments. Keep Studio open while they're live; this PC won't go to sleep meanwhile.</p>
+    <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="local_watcher" id="lw-on" value="true" style="width:auto" ${s.local_watcher ? "checked" : ""}> Run the stream watcher on this PC (free)</label>
+    <div id="lw-fields" ${s.local_watcher ? "" : "hidden"} style="display:flex;flex-direction:column;gap:12px">
+      <div class="row"><label>Twitch Client ID <input name="twitch_client_id" value="${esc(s.twitch_client_id)}" placeholder="dev.twitch.tv/console"></label>
+        <label>Twitch Client Secret <input name="twitch_client_secret" value="${esc(s.twitch_client_secret)}" autocomplete="off"></label></div>
+      <div class="row"><label>Record at most <select name="max_recording" id="lw-n">${[1, 2, 3, 4, 5, 6, 8].map((n) => `<option value="${n}" ${n == s.max_recording ? "selected" : ""}>${n} stream${n > 1 ? "s" : ""} at once</option>`).join("")}</select></label>
+        <label>Video quality <select name="quality" id="lw-q">${[["480p", "480p (least data)"], ["720p", "720p (recommended)"], ["1080p", "1080p (sharpest, most data)"]].map(([k, l]) => `<option value="${k}" ${k === s.quality ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+      <p class="sub" id="lw-est" style="margin:0"></p>
+    </div>
+    <div id="remote-fields" ${s.local_watcher ? "hidden" : ""} style="display:flex;flex-direction:column;gap:12px">
+      <div class="row"><label style="flex:2 1 260px">Server address <input name="server_url" value="${esc(s.server_url)}" placeholder="http://100.x.y.z:8787"></label>
+        <label>Token <input name="token" value="${esc(s.token)}" placeholder="from the server"></label></div>
+    </div>
     <label>Check for new captures every (minutes) <input type="number" name="poll_minutes" value="${esc(s.poll_minutes)}" min="1"></label>
     <h2>Director</h2>
     <p class="sub" style="margin:0">The director decides how each clip is edited. <b>Free (built-in)</b> costs nothing: it reads what chat spammed, what was said and where the audio peaks. <b>Claude</b> also watches frames from the clip and writes the hook and caption like a human editor. It's paid per clip; switch when the clips start earning.</p>
@@ -430,12 +447,18 @@ async function renderPrefs() {
   </form>`;
 }
 
+function dataEstimate() {
+  const el = $("#lw-est"); if (!el) return;
+  const mbps = { "480p": 1.5, "720p": 3, "1080p": 6 }[$("#lw-q").value] || 3, n = +$("#lw-n").value;
+  el.textContent = `Internet use while streamers are live: about ${(mbps * 0.45).toFixed(1)} GB per hour per recorded stream, up to ${(mbps * 0.45 * n).toFixed(1)} GB per hour if ${n} are live at once (${(mbps * n).toFixed(0)} Mbps download). Chat-only watching uses almost nothing.`;
+}
+
 /* ---------- routing + events ---------- */
 const PAGES = { review: renderReview, ready: renderReady, queue: renderQueue, campaigns: renderCampaigns, server: renderServer, prefs: renderPrefs };
 async function render() {
   page = (location.hash || "#review").slice(1); if (!PAGES[page]) page = "review";
   document.querySelectorAll("nav a").forEach((a) => a.dataset.page === page ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
-  try { await PAGES[page](); } catch (e) { $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  try { await PAGES[page](); if (page === "prefs") dataEstimate(); } catch (e) { $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }
 window.addEventListener("hashchange", render);
 
@@ -453,7 +476,7 @@ document.addEventListener("click", async (e) => {
     if (b.dataset.remove) { await act(() => api(`/api/campaigns/${editing}/asset/${b.dataset.remove}`, { method: "DELETE" }), "Removed"); return render(); }
     if (b.id === "cdel") { if (b.dataset.sure) { await act(() => api(`/api/campaigns/${editing}`, { method: "DELETE" }), "Deleted"); editing = null; return render(); }
       b.dataset.sure = 1; b.textContent = "Click again to delete"; return; }
-    if (b.id === "push") return act(() => api("/api/campaigns/push", { method: "POST" }), "Sent. The server restarts and starts watching these streamers.");
+    if (b.id === "push") return act(() => api("/api/campaigns/push", { method: "POST" }), "Done. The watcher restarts and follows these streamers.");
   }
   if (page === "server" && b.id === "syncnow") { const r = await act(() => api("/api/sync", { method: "POST" })); if (r) toast(r.error ? r.error : `${r.new} new clip(s) added`); refreshState(); }
 });
@@ -463,11 +486,15 @@ document.addEventListener("submit", async (e) => {
     if (saved) { editing = saved.slug; render(); } }
   if (e.target.id === "sform") { e.preventDefault();
     const fd = Object.fromEntries(new FormData(e.target)); fd.poll_minutes = +fd.poll_minutes;
+    fd.local_watcher = !!$("#lw-on")?.checked; if (fd.max_recording) fd.max_recording = +fd.max_recording;
+    if (fd.local_watcher) { delete fd.server_url; delete fd.token; }
     await act(() => api("/api/settings", { method: "PUT", body: fd }), "Settings saved"); refreshState(); render(); }
 });
 document.addEventListener("change", async (e) => {
   const inp = e.target;
   if (inp.id === "dir-mode") $("#ai-fields").hidden = inp.value !== "ai";
+  if (inp.id === "lw-on") { $("#lw-fields").hidden = !inp.checked; $("#remote-fields").hidden = inp.checked; }
+  if (["lw-n", "lw-q"].includes(inp.id)) dataEstimate();
   if (page === "campaigns" && inp.type === "file" && inp.dataset.kind && inp.files[0]) {
     const fd = new FormData(); fd.append("kind", inp.dataset.kind); fd.append("file", inp.files[0]);
     await act(() => api(`/api/campaigns/${editing}/asset`, { method: "POST", body: fd }), "Uploaded"); render();

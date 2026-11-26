@@ -42,7 +42,7 @@ if errorlevel 1 (
 
 echo Installing Studio packages (this can take a few minutes)...
 python -m pip install --upgrade pip
-python -m pip install -r requirements-studio.txt
+python -m pip install -r requirements-studio.txt -r requirements-watcher.txt
 if errorlevel 1 (
   echo.
   echo Package install failed. Send the text above to Claude.
@@ -53,10 +53,10 @@ if errorlevel 1 (
 echo.
 echo ==========================================================
 echo  Setup finished.
-echo  Double-click "Start Studio.bat". Your browser opens the dashboard.
+echo  Double-click "Start Clipping.bat". Your browser opens the dashboard.
 echo  In the dashboard:
-echo    1. Settings: paste your server address and token (and your
-echo       Anthropic API key for the AI director)
+echo    1. Settings: paste your Twitch Client ID and Secret
 echo    2. Campaigns: add your campaign, paste the brief, add streamers
+echo  Keep the window open while your streamers are live.
 echo ==========================================================
 pause

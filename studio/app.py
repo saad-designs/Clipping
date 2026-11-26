@@ -48,15 +48,31 @@ def mask(key: str) -> str:
     return (key[:7] + "…" + key[-4:]) if key and len(key) > 12 else ("set" if key else "")
 
 
-def create_app(store: Store, worker: Worker | None = None, start_worker: bool = True) -> FastAPI:
+WATCHER_KEYS = ("local_watcher", "twitch_client_id", "twitch_client_secret", "max_recording", "quality")
+
+
+def create_app(store: Store, worker: Worker | None = None, start_worker: bool = True, local=None) -> FastAPI:
+    """`local`: a LocalWatcher to run the stream watcher on this PC (one-PC mode), or None."""
     worker = worker or Worker(store)
 
     @asynccontextmanager
     async def lifespan(_app):
+        if local is not None and store.settings().get("local_watcher"):
+            local.start()
         if start_worker:
             worker.start()
         yield
         worker.stop()
+        if local is not None:
+            local.stop()
+
+    def local_on() -> bool:
+        return local is not None and bool(store.settings().get("local_watcher"))
+
+    def channels_changed(before: list) -> None:
+        from studio.local_watcher import campaign_payload
+        if local_on() and campaign_payload(store.campaigns()) != before:
+            local.restart()
 
     app = FastAPI(title="Clipping Studio", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.state.store, app.state.worker = store, worker
@@ -83,16 +99,33 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
     @app.get("/api/settings")
     def get_settings():
         s = store.settings()
-        return {**s, "anthropic_api_key": mask(s.get("anthropic_api_key", "")), "token": mask(s.get("token", ""))}
+        return {**s, "anthropic_api_key": mask(s.get("anthropic_api_key", "")), "token": mask(s.get("token", "")),
+                "twitch_client_secret": mask(s.get("twitch_client_secret", "")), "local_token": "",
+                "local_available": local is not None}
 
     @app.put("/api/settings")
     def put_settings(values: dict):
-        for secret in ("anthropic_api_key", "token"):   # masked values coming back unchanged aren't saved
+        for secret in ("anthropic_api_key", "token", "twitch_client_secret"):   # masked values coming back aren't saved
             if secret in values and ("…" in str(values[secret]) or values[secret] == "set"):
                 values.pop(secret)
+        values.pop("local_token", None)
+        before = {k: store.settings().get(k) for k in WATCHER_KEYS}
         store.save_settings(values)
+        after = {k: store.settings().get(k) for k in WATCHER_KEYS}
+        if local is not None and before != after:
+            if after["local_watcher"]:
+                local.start()
+                local.restart()
+            else:
+                local.stop()
         worker.wake()
         return get_settings()
+
+    @app.get("/api/local-watcher")
+    def local_status():
+        if not local_on():
+            return {"enabled": False}
+        return {"enabled": True, **local.status()}
 
     @app.post("/api/sync")
     def sync_now():
@@ -117,14 +150,21 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
 
     @app.post("/api/campaigns")
     def save_campaign(data: dict):
+        from studio.local_watcher import campaign_payload
+        before = campaign_payload(store.campaigns())
         try:
-            return store.save_campaign(data)
+            saved = store.save_campaign(data)
         except ValueError as e:
             raise HTTPException(400, str(e))
+        channels_changed(before)        # one-PC mode: the watcher picks up new streamers right away
+        return saved
 
     @app.delete("/api/campaigns/{slug}")
     def delete_campaign(slug: str):
+        from studio.local_watcher import campaign_payload
+        before = campaign_payload(store.campaigns())
         store.delete_campaign(slug)
+        channels_changed(before)
         return {"ok": True}
 
     @app.post("/api/campaigns/{slug}/asset")
@@ -155,6 +195,9 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
     @app.post("/api/campaigns/push")
     def push_campaigns():
         """Send every campaign's channels and rules to the Oracle server (it restarts itself)."""
+        if local_on():
+            local.restart()
+            return {"ok": True, "server": "this PC"}
         s = store.settings()
         if not s.get("server_url"):
             raise HTTPException(400, "Set the server address in Settings first.")
@@ -327,19 +370,23 @@ def worker_caption(store: Store, cid: int) -> None:
 def main(root: str = "studio_data", port: int = 8790, open_browser: bool = True) -> None:
     import uvicorn
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
+    from studio.local_watcher import LocalWatcher, keep_awake
     store = Store(Path(root).resolve())
     _import_yaml_settings(store)
+    local = LocalWatcher(store)
+    if keep_awake(True):
+        print("  This PC won't go to sleep while Studio is open (the screen can still turn off).")
     url = f"http://localhost:{port}"
     print(f"\n  Clipping Studio is running: {url}\n  Keep this window open. Close it to stop.\n")
     if open_browser:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    uvicorn.run(create_app(store), host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(create_app(store, local=local), host="127.0.0.1", port=port, log_level="warning")
 
 
 def _import_yaml_settings(store: Store) -> None:
     """First run: take server/token/key from an existing studio.yaml, if there is one."""
     s = store.settings()
-    if s.get("server_url"):
+    if s.get("local_watcher") or s.get("server_url"):
         return
     try:
         from studio import config

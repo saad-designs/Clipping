@@ -32,7 +32,7 @@ class Client:
                 raise ServerError("server rejected the token: check `token` in studio.yaml") from None
             raise ServerError(f"{method} {path} failed: {e.code} {e.read()[:200]!r}") from None
         except urllib.error.URLError as e:
-            raise ServerError(f"can't reach {self.base} ({e.reason}). Is Tailscale on and the watcher running?") from None
+            raise ServerError(f"can't reach {self.base} ({e.reason}). Is the stream watcher running? (It needs a campaign with at least one streamer.)") from None
 
     def get(self, path: str):
         with self._req("GET", path) as r:
