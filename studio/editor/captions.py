@@ -27,11 +27,14 @@ def _clean(text: str) -> str:
     return text.replace("\\", "").replace("{", "(").replace("}", ")")
 
 
-def chunk(words: list[Word], per_line: int) -> list[list[Word]]:
-    """Group words into short lines, breaking early on pauses and sentence ends."""
+def chunk(words: list[Word], per_line: int, max_chars: int = 16) -> list[list[Word]]:
+    """Group words into short lines, breaking early on pauses, sentence ends, and when the line
+    would get too wide (long words, e.g. German, would otherwise wrap into a 3-line block)."""
     out, cur = [], []
     for w in words:
-        if cur and (len(cur) >= per_line or w.start - cur[-1].end > 0.6 or re.search(r"[.!?]$", cur[-1].text)):
+        width = len(" ".join(x.text for x in cur + [w]))
+        if cur and (len(cur) >= per_line or width > max_chars or w.start - cur[-1].end > 0.6
+                    or re.search(r"[.!?]$", cur[-1].text)):
             out.append(cur)
             cur = []
         cur.append(w)
@@ -64,7 +67,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     lines = []
     upper = style.get("uppercase", True)
     length = clip_end - clip_start
-    groups = chunk(words, int(style.get("words_per_line", 3)))
+    # ~16 bold capitals fit across 1080px at size 96; scale the limit with the font size
+    max_chars = int(style.get("max_chars") or round(16 * 96 / int(style.get("size", 96))))
+    groups = chunk(words, int(style.get("words_per_line", 3)), max_chars)
     for gi, group in enumerate(groups):
         next_start = groups[gi + 1][0].start if gi + 1 < len(groups) else length
         texts = [_clean(w.text.upper() if upper else w.text) for w in group]

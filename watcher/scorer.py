@@ -13,6 +13,7 @@ When the stream is being recorded, audio loudness is added as a 4th signal (a bo
 from __future__ import annotations
 
 import math
+import statistics
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -74,6 +75,7 @@ class ChannelScorer:
         self.open: dict[float, _Bucket] = {}
         self.next_close: float | None = None
         self.last_fired = -math.inf
+        self.fired: deque[tuple[float, float]] = deque()   # (time, score) of recent moments
 
     def _bucket_start(self, ts: float) -> float:
         b = self.cfg.bucket_seconds
@@ -117,6 +119,14 @@ class ChannelScorer:
         self.open.clear()
         self.next_close = None
 
+    def _beats_hourly_cap(self, now: float, score: float) -> bool:
+        """Huge chats cross the threshold constantly. Past the hourly cap, a moment must beat the
+        median of this hour's moments, so you review that streamer's best, not all of it."""
+        while self.fired and self.fired[0][0] < now - 3600:
+            self.fired.popleft()
+        cap = self.cfg.max_moments_per_hour
+        return not cap or len(self.fired) < cap or score > statistics.median(s for _, s in self.fired)
+
     def _audio_peak(self, bucket: _Bucket) -> float | None:
         # Chat reacts ~chat_lag seconds AFTER the moment, so look back that far for the sound.
         lo = bucket.start - self.cfg.chat_lag_seconds - self.cfg.bucket_seconds
@@ -140,8 +150,10 @@ class ChannelScorer:
                 self.collected.append((at, score, zs))
             # Volume alone (raid, giveaway command, bot spam) isn't a moment: chat must REACT.
             # Audio only boosts the score; a loud game sound with no chat reaction never fires.
-            if zs["hype"] >= cfg.min_hype_z and score >= cfg.threshold and bucket.start - self.last_fired >= cfg.cooldown_seconds:
+            if (zs["hype"] >= cfg.min_hype_z and score >= cfg.threshold
+                    and bucket.start - self.last_fired >= cfg.cooldown_seconds and self._beats_hourly_cap(bucket.start, score)):
                 self.last_fired = bucket.start
+                self.fired.append((bucket.start, score))
                 sig = {**vals, **{f"z_{k}": round(z, 2) for k, z in zs.items()}}
                 if peak is not None:
                     sig["audio_lufs"] = round(peak, 1)

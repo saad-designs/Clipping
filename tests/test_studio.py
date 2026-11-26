@@ -58,6 +58,11 @@ class CaptionTests(unittest.TestCase):
         groups = captions.chunk(words, 3)
         self.assertEqual([len(g) for g in groups], [3, 1, 1])
 
+    def test_long_words_split_into_short_lines(self):
+        words = [Word(i * 0.3, i * 0.3 + 0.25, t) for i, t in enumerate(["Bundenzielle", "Probleme,", "Probleme,", "ist"])]
+        groups = captions.chunk(words, 3, 16)
+        self.assertTrue(all(len(" ".join(w.text for w in g)) <= 16 or len(g) == 1 for g in groups), groups)
+
     def test_ass_times_relative_and_highlighted(self):
         ass = captions.build_ass(W, clip_start=1.0, clip_end=4.0, style=scfg.DEFAULTS["captions"])
         dialogue = [l for l in ass.splitlines() if l.startswith("Dialogue")]

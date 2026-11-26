@@ -22,14 +22,21 @@ def probe(path: Path) -> tuple[float, bool]:
     return float(data["format"]["duration"]), any(s["codec_type"] == "audio" for s in data["streams"])
 
 
+def _shorten(text: str, limit: int = 120) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0].rstrip(",;:") + "…"   # never cut a word in half
+
+
 def hook_line(words: list[transcribe.Word], start: float, end: float) -> str:
     """First complete sentence in the kept part, as a starting point for the post caption."""
     text = " ".join(w.text for w in words if start <= w.start < end)
     for sentence in text.replace("?", "?.").replace("!", "!.").split("."):
         s = sentence.strip()
         if len(s.split()) >= HOOK_WORDS:
-            return s[:120]
-    return text[:120].strip()
+            return _shorten(s)
+    return _shorten(text)
 
 
 def edit(src: Path, cfg: dict, layout: str | None = None) -> Path:

@@ -39,6 +39,16 @@ class ScorerTests(unittest.TestCase):
     def test_two_separate_spikes(self):
         self.assertEqual(len(simulate({400: 15, 700: 15})), 2)
 
+    def test_hourly_cap_keeps_only_stronger_moments(self):
+        cfg = ScorerConfig(max_moments_per_hour=2)
+        sc = ChannelScorer("twitch:test", cfg)
+        self.assertTrue(sc._beats_hourly_cap(0, 10)); sc.fired.append((0, 10))
+        self.assertTrue(sc._beats_hourly_cap(100, 8)); sc.fired.append((100, 8))
+        self.assertFalse(sc._beats_hourly_cap(200, 7))     # cap reached, below this hour's median (9)
+        self.assertFalse(sc._beats_hourly_cap(250, 9))
+        self.assertTrue(sc._beats_hourly_cap(300, 9.5))    # above the median
+        self.assertTrue(sc._beats_hourly_cap(4000, 1))     # an hour later the cap resets
+
     def test_single_spammer_is_weak(self):
         sc = ChannelScorer("twitch:test", ScorerConfig())
         rng = random.Random(2)

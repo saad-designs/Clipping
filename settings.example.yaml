@@ -19,6 +19,7 @@ scorer:
   min_hype_z: 2.0            # hype reactions must rise too; pure volume (raids, bots) is ignored
   per_user_cap: 2            # max messages counted per user per bucket (anti-spam)
   score_delay_seconds: 15    # wait this long before scoring so the audio for that moment is in
+  max_moments_per_hour: 6    # per channel; past this a moment must beat the hour's median score (0 = no cap)
   weights:
     messages: 1.0
     hype: 1.5

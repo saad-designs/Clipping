@@ -19,6 +19,7 @@ class ScorerConfig:
     min_hype_z: float = 2.0
     per_user_cap: int = 2
     score_delay_seconds: int = 15
+    max_moments_per_hour: int = 6   # per channel; past this a moment must beat the hour's median score
     weights: dict = field(default_factory=lambda: {"messages": 1.0, "hype": 1.5, "unique": 1.0, "audio": 1.0})
 
 
