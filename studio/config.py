@@ -12,7 +12,7 @@ DEFAULTS = {
     "output_dir": "Campaigns",
     "poll_minutes": 3,
     "editing": {"target_seconds": 35, "layout": "blur", "blur_zoom": 1.25, "fps": 30, "encoder": "auto"},
-    "captions": {"enabled": True, "whisper_model": "small", "language": None, "font": "Arial", "size": 96,
+    "captions": {"enabled": True, "whisper_model": "small", "language": None, "font": "Inter Black", "size": 104,
                  "words_per_line": 3, "uppercase": True, "highlight_color": "#FFD21F", "position": 0.70},
     "facecam": {},
     "vod": {"top": 8, "min_gap_seconds": 90, "whisper_model": "base"},

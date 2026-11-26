@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Clipping Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: left rail of sections (top bar on phones); Review is a column of finished Shorts in
+   phone frames with the director's notes and editable text beside each one. */
+:root {
+  --bg: #f2f3f6; --surface: #ffffff; --raised: #f8f9fb; --fg: #161922; --muted: #5c6374; --line: #dcdfe7;
+  --accent: #d4382b; --accent-soft: #fbe6e3;
+  --good: #1e8a4b; --good-soft: #e1f3e8; --warn: #a86400; --warn-soft: #fbf0dc; --bad: #c03434; --bad-soft: #f9e3e3;
+  --info: #2f5fb3; --info-soft: #e5edfa;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-data: ui-monospace, "SF Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111318; --surface: #1a1d24; --raised: #20242c; --fg: #e9ebf1; --muted: #9aa1b1; --line: #2c303a;
+  --accent: #ff5a4b; --accent-soft: #3a1d1a;
+  --good: #4cc37f; --good-soft: #15301f; --warn: #f0b247; --warn-soft: #382a12; --bad: #f06b6b; --bad-soft: #3a1c1c;
+  --info: #8fb2f5; --info-soft: #1b2740; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111318; --surface: #1a1d24; --raised: #20242c; --fg: #e9ebf1; --muted: #9aa1b1; --line: #2c303a;
+  --accent: #ff5a4b; --accent-soft: #3a1d1a;
+  --good: #4cc37f; --good-soft: #15301f; --warn: #f0b247; --warn-soft: #382a12; --bad: #f06b6b; --bad-soft: #3a1c1c;
+  --info: #8fb2f5; --info-soft: #1b2740; color-scheme: dark }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--font-body); }
+.app { display: grid; grid-template-columns: 220px 1fr; min-height: 100%; }
+nav { background: var(--surface); border-right: 1px solid var(--line); padding: 18px 12px; position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px; }
+.brand { font: 700 18px var(--font-display); padding: 0 10px 14px; letter-spacing: -0.01em; }
+.brand span { color: var(--accent); }
+nav a { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 500; }
+nav a:hover { background: var(--raised); color: var(--fg); }
+nav a[aria-current="page"] { background: var(--fg); color: var(--bg); }
+nav .n { font: 600 12px var(--font-data); background: var(--raised); color: var(--fg); padding: 0 7px; border-radius: 999px; }
+nav a[aria-current="page"] .n { background: var(--bg); color: var(--fg); }
+.status { margin-top: auto; font-size: 12px; color: var(--muted); padding: 10px; border-top: 1px solid var(--line); }
+.status b { color: var(--fg); font-weight: 600; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+.dot.busy { background: var(--warn); } .dot.ok { background: var(--good); } .dot.err { background: var(--bad); }
+main { padding-block: 22px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); min-width: 0; }
+h1 { font: 700 24px var(--font-display); margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font: 700 16px var(--font-display); margin: 0; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 75ch; }
+.empty { color: var(--muted); background: var(--surface); border: 1px dashed var(--line); border-radius: 12px; padding: 36px 20px; text-align: center; }
+.empty b { color: var(--fg); }
+button, .btn { font: 600 13px var(--font-body); border-radius: 8px; padding: 8px 14px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+button.good { background: var(--good-soft); color: var(--good); border-color: transparent; }
+button.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+button:disabled { opacity: .5; cursor: default; }
+input, select, textarea { font: 14px var(--font-body); color: var(--fg); background: var(--raised); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%; }
+textarea { resize: vertical; min-height: 70px; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+label .hint { font-weight: 400; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+.row > * { flex: 1 1 160px; min-width: 0; }
+kbd { font: 12px var(--font-data); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--surface); }
+.pill { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--raised); color: var(--muted); }
+.pill.good { background: var(--good-soft); color: var(--good); } .pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); } .pill.info { background: var(--info-soft); color: var(--info); }
+
+/* review */
+.clips { display: flex; flex-direction: column; gap: 18px; }
+.clip { display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+.clip.focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+.phone { border: 7px solid #000; border-radius: 28px; overflow: hidden; background: #000; aspect-ratio: 9/16; width: 100%; max-width: 300px; }
+.phone video { width: 100%; height: 100%; display: block; object-fit: cover; }
+.side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chan { font: 700 17px var(--font-display); overflow-wrap: anywhere; }
+.why { background: var(--info-soft); color: var(--info); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; }
+.skip { background: var(--warn-soft); color: var(--warn); border-radius: 8px; padding: 8px 12px; font-size: 13.5px; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 14px; font: 12px var(--font-data); color: var(--muted); }
+.facts b { color: var(--fg); font-weight: 600; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.reedit { display: flex; gap: 8px; flex-wrap: wrap; }
+.reedit input { flex: 1 1 240px; }
+.copyrow { display: flex; gap: 8px; align-items: start; }
+.copyrow textarea { flex: 1; }
+details summary { cursor: pointer; color: var(--muted); font-weight: 600; font-size: 13px; }
+/* queue + tables */
+.table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.table th, .table td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.table th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--raised); }
+.table td.err { color: var(--bad); font-size: 12.5px; max-width: 420px; overflow-wrap: anywhere; }
+.scroll { overflow-x: auto; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.grid2 { display: grid; grid-template-columns: 280px 1fr; gap: 18px; align-items: start; }
+.clist { display: flex; flex-direction: column; gap: 6px; }
+.clist button { text-align: left; display: flex; justify-content: space-between; align-items: center; }
+.clist button[aria-pressed="true"] { border-color: var(--fg); box-shadow: inset 3px 0 0 var(--accent); }
+.chanrow { display: grid; grid-template-columns: 120px 1fr 1fr auto; gap: 8px; align-items: center; }
+.asset { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.asset img { height: 40px; border-radius: 6px; background: repeating-conic-gradient(var(--line) 0 25%, transparent 0 50%) 0 0/12px 12px; }
+.ready { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.ready .card .phone { max-width: 100%; }
+#toast { position: fixed; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 9px 16px; border-radius: 9px; font-size: 13.5px; z-index: 50; max-width: 90vw; }
+/* webcam picker */
+.modal { position: fixed; inset: 0; background: rgb(0 0 0 / .6); display: grid; place-items: center; z-index: 40; padding: 16px; }
+.modal .card { max-width: 900px; width: 100%; }
+.pick { position: relative; user-select: none; touch-action: none; }
+.pick img { width: 100%; display: block; border-radius: 8px; }
+.pick .box { position: absolute; border: 3px solid #39ff6a; background: rgb(57 255 106 / .15); pointer-events: none; }
+@media (max-width: 820px) {
+  .app { grid-template-columns: 1fr; }
+  nav { position: sticky; top: 0; height: auto; flex-direction: row; overflow-x: auto; padding: 8px 12px; z-index: 10; border-right: 0; border-bottom: 1px solid var(--line); }
+  .brand, .status { display: none; }
+  nav a { flex: none; gap: 6px; }
+  main { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .clip, .grid2 { grid-template-columns: 1fr; }
+  .phone { margin: 0 auto; }
+  .chanrow { grid-template-columns: 1fr 1fr; }
+}
+@media (prefers-reduced-motion: no-preference) { .clip { transition: outline-color .15s; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav aria-label="Sections">
+    <div class="brand">Clipping <span>Studio</span></div>
+    <a href="#review" data-page="review">Review <span class="n" id="n-review">0</span></a>
+    <a href="#ready" data-page="ready">Ready to upload <span class="n" id="n-ready">0</span></a>
+    <a href="#queue" data-page="queue">Queue <span class="n" id="n-queue">0</span></a>
+    <a href="#campaigns" data-page="campaigns">Campaigns</a>
+    <a href="#server" data-page="server">Server</a>
+    <a href="#prefs" data-page="prefs">Settings</a>
+    <div class="status" id="status"><span class="dot"></span>Starting…</div>
+  </nav>
+  <main id="main"></main>
+</div>
+<div id="toast" hidden></div>
+<div id="modal" class="modal" hidden></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const STYLES = { pop_yellow: "Pop yellow", karaoke_box: "Karaoke box", outline_white: "Big outline", punch_red: "Punch red" };
+const LAYOUTS = { facecam_split: "Facecam top, game below", face_crop: "Face crop (just chatting)", blur_fit: "Full frame + blur", game_only: "Game only" };
+let page = "review", cache = {}, focus = 0, campaigns = [], editing = null;
+
+async function api(path, opts = {}) {
+  const isForm = opts.body instanceof FormData;
+  const r = await fetch(path, { ...opts, headers: isForm ? {} : { "Content-Type": "application/json" },
+                                body: opts.body && !isForm ? JSON.stringify(opts.body) : opts.body });
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m; } catch {} throw new Error(m); }
+  return r.headers.get("content-type")?.includes("json") ? r.json() : r;
+}
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(t._h); t._h = setTimeout(() => (t.hidden = true), 2600); }
+async function act(fn, ok) { try { const r = await fn(); if (ok) toast(ok); return r; } catch (e) { toast(e.message); } }
+const ago = (ts) => { const s = Date.now() / 1000 - ts; return s < 90 ? "just now" : s < 3600 ? Math.round(s / 60) + " min ago" : s < 86400 ? Math.round(s / 3600) + " h ago" : new Date(ts * 1000).toLocaleDateString(); };
+const qualityPill = (q) => q == null ? "" : `<span class="pill ${q >= 7 ? "good" : q >= 4 ? "warn" : "bad"}">Quality ${q}/10</span>`;
+
+/* ---------- status rail ---------- */
+async function refreshState() {
+  try {
+    const s = await api("/api/state");
+    const c = s.counts;
+    $("#n-review").textContent = c.review; $("#n-ready").textContent = c.approved;
+    $("#n-queue").textContent = c.queued + c.editing + c.failed + s.jobs;
+    const busy = s.worker !== "idle";
+    const sync = s.last_sync?.error ? `<span class="dot err"></span>Server: ${esc(s.last_sync.error).slice(0, 90)}`
+      : s.last_sync?.at ? `<span class="dot ok"></span>Server checked ${ago(s.last_sync.at)}` : `<span class="dot"></span>No server set`;
+    $("#status").innerHTML = `<div><span class="dot ${busy ? "busy" : "ok"}"></span><b>${busy ? esc(s.worker) : "Idle"}</b></div>
+      <div style="margin-top:6px">${sync}</div><div style="margin-top:6px">Director: <b>${s.ai ? "AI" : "rules (add an API key)"}</b></div>`;
+    cache.state = s;
+  } catch { $("#status").innerHTML = `<span class="dot err"></span>Studio isn't responding`; }
+}
+
+/* ---------- review ---------- */
+async function renderReview() {
+  const clips = await api("/api/clips?status=review");
+  cache.review = clips; focus = Math.min(focus, Math.max(0, clips.length - 1));
+  $("#main").innerHTML = `<h1>Review</h1>
+    <p class="sub">Finished edits waiting for you. Watch, adjust the text if you like, then approve. <kbd>J</kbd>/<kbd>K</kbd> move · <kbd>A</kbd> approve · <kbd>R</kbd> reject · <kbd>E</kbd> ask for changes.</p>
+    ${clips.length ? `<div class="clips">${clips.map(reviewCard).join("")}</div>`
+      : `<div class="empty"><b>Nothing to review yet.</b><br>When the server catches a hype moment for one of your campaigns, Studio edits it and it shows up here. You can also add a video yourself in <a href="#queue">Queue</a>.</div>`}`;
+}
+function reviewCard(c, i) {
+  const p = c.plan || {}, post = p.post || {};
+  const m = c.meta || {};
+  return `<article class="clip ${i === focus ? "focus" : ""}" data-id="${c.id}" data-i="${i}">
+    <div class="phone"><video src="/api/clips/${c.id}/video?v=${Math.round(c.updated)}" controls playsinline preload="metadata"></video></div>
+    <div class="side">
+      <div class="head"><span class="chan">${esc(c.channel || c.source)}</span><span class="pill">${esc(c.campaign)}</span>${qualityPill(p.quality)}
+        <span class="pill ${p.source?.startsWith("ai") ? "info" : ""}">${p.source?.startsWith("ai") ? "AI director" : "Rule-based edit"}</span>
+        ${m.viewer_clips ? `<span class="pill good">🎬 viewers clipped this</span>` : ""}<span class="pill">${ago(c.created)}</span></div>
+      ${p.why ? `<div class="why"><b>Director:</b> ${esc(p.why)}</div>` : ""}
+      ${p.skip ? `<div class="skip"><b>Director suggests skipping:</b> ${esc(p.skip_reason)}</div>` : ""}
+      <div class="facts"><span>length <b>${p.keep ? (p.keep[1] - p.keep[0]).toFixed(0) + "s" : "?"}</b></span><span>layout <b>${esc(LAYOUTS[p.layout] || p.layout)}</b></span>
+        <span>captions <b>${esc(STYLES[p.caption_style] || p.caption_style)}</b></span><span>zooms <b>${(p.zooms || []).length}</b></span><span>sounds <b>${(p.sfx || []).map((s) => s.sound).join(", ") || "none"}</b></span></div>
+      <div class="row">
+        <label>Hook title <input id="hook-${c.id}" value="${esc(p.hook?.text || "")}" placeholder="No hook"></label>
+        <label>Caption style <select id="style-${c.id}">${Object.entries(STYLES).map(([k, v]) => `<option value="${k}" ${k === p.caption_style ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+        <label>Layout <select id="layout-${c.id}">${Object.entries(LAYOUTS).map(([k, v]) => `<option value="${k}" ${k === p.layout ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+      </div>
+      <label>Post title <input id="title-${c.id}" value="${esc(post.title || "")}"></label>
+      <label>Post caption <textarea id="cap-${c.id}" rows="2">${esc(post.caption || "")}</textarea></label>
+      <label>Hashtags <input id="tags-${c.id}" value="${esc((post.hashtags || []).join(" "))}"></label>
+      <div class="actions">
+        <button class="good" data-act="approve">Approve</button>
+        <button data-act="save">Save changes &amp; re-render</button>
+        <button class="bad" data-act="reject">Reject</button>
+      </div>
+      <div class="reedit"><input id="notes-${c.id}" placeholder="Ask the director for changes, e.g. “funnier hook, start 2s later, no sound effects”">
+        <button data-act="reedit">Re-edit</button></div>
+    </div></article>`;
+}
+function planEdits(id) {
+  return { hook_text: $(`#hook-${id}`).value, caption_style: $(`#style-${id}`).value, layout: $(`#layout-${id}`).value,
+           post_title: $(`#title-${id}`).value, post_caption: $(`#cap-${id}`).value,
+           hashtags: $(`#tags-${id}`).value.split(/\s+/).filter(Boolean) };
+}
+async function reviewAction(id, a) {
+  const c = cache.review.find((x) => x.id === id), p = c.plan || {};
+  if (a === "approve") {
+    const e = planEdits(id);
+    await act(() => api(`/api/clips/${id}/edit`, { method: "POST", body: { post_title: e.post_title, post_caption: e.post_caption, hashtags: e.hashtags, rerender: false } }));
+    await act(() => api(`/api/clips/${id}/approve`, { method: "POST" }), "Approved. It's in Ready to upload.");
+  } else if (a === "reject") await act(() => api(`/api/clips/${id}/reject`, { method: "POST" }), "Rejected");
+  else if (a === "save") {
+    const e = planEdits(id);
+    const visual = e.hook_text !== (p.hook?.text || "") || e.caption_style !== p.caption_style || e.layout !== p.layout;
+    await act(() => api(`/api/clips/${id}/edit`, { method: "POST", body: e }), visual ? "Re-rendering with your changes…" : "Saved");
+  } else if (a === "reedit") {
+    const notes = $(`#notes-${id}`).value.trim();
+    if (!notes) { $(`#notes-${id}`).focus(); return toast("Write what you'd like changed"); }
+    await act(() => api(`/api/clips/${id}/reedit`, { method: "POST", body: { notes } }), "Sent to the director. It'll be back in Review soon.");
+  }
+  render();
+}
+
+/* ---------- ready ---------- */
+async function renderReady() {
+  const clips = await api("/api/clips?status=approved");
+  cache.ready = clips;
+  $("#main").innerHTML = `<h1>Ready to upload</h1>
+    <p class="sub">Approved clips. Upload them, paste the caption, then mark them posted. Files are in <code>${esc(cache.state?.output_dir || "Campaigns")}\\&lt;campaign&gt;\\ready</code>.</p>
+    ${clips.length ? `<div class="ready">${clips.map((c) => { const post = c.plan?.post || {};
+      const text = [post.title, post.caption, (post.hashtags || []).join(" ")].filter(Boolean).join("\n\n");
+      return `<div class="card" data-id="${c.id}"><div class="phone"><video src="/api/clips/${c.id}/video" controls playsinline preload="metadata"></video></div>
+        <div class="head"><span class="chan">${esc(c.channel || c.source)}</span><span class="pill">${esc(c.campaign)}</span></div>
+        <div class="copyrow"><textarea id="rc-${c.id}" rows="4" readonly>${esc(text)}</textarea></div>
+        <div class="actions"><button class="primary" data-act="copy">Copy caption</button><button data-act="show">Show file</button><button data-act="posted">Mark posted</button></div></div>`; }).join("")}</div>`
+      : `<div class="empty"><b>Nothing ready yet.</b><br>Approve clips in Review and they'll wait here for upload.</div>`}`;
+}
+async function readyAction(id, a) {
+  if (a === "copy") { const el = $(`#rc-${id}`);
+    try { await navigator.clipboard.writeText(el.value); toast("Caption copied"); } catch { el.select(); toast("Selected: press Ctrl+C"); } }
+  if (a === "show") await act(() => api(`/api/clips/${id}/show`, { method: "POST" }), "Opened the folder");
+  if (a === "posted") { await act(() => api(`/api/clips/${id}/posted`, { method: "POST" }), "Marked posted"); render(); }
+}
+
+/* ---------- queue ---------- */
+async function renderQueue() {
+  const clips = await api("/api/clips?status=queued,editing,failed,rejected");
+  campaigns = await api("/api/campaigns");
+  const s = cache.state || {};
+  const label = { queued: ["Waiting", ""], editing: ["Editing", "warn"], failed: ["Failed", "bad"], rejected: ["Rejected", ""] };
+  $("#main").innerHTML = `<h1>Queue</h1>
+    <p class="sub">Clips waiting to be edited. ${s.worker && s.worker !== "idle" ? `Now: <b>${esc(s.worker)}</b>.` : ""}</p>
+    <div class="card" style="margin-bottom:18px"><h2>Add a video yourself</h2>
+      <p class="sub" style="margin:0">Paste a VOD or video link (Twitch, Kick, YouTube…) and Studio picks its best moments. Or upload a file: a long video gets its best moments picked; a short clip can be used as-is.</p>
+      <form id="ingest" class="row">
+        <label>Campaign <select name="campaign" id="ing-camp" required>${campaigns.map((c) => `<option>${esc(c.name)}</option>`).join("")}</select></label>
+        <label style="flex:2 1 260px">Link <input name="url" id="ing-url" placeholder="https://www.twitch.tv/videos/…"></label>
+        <label>Or file <input type="file" name="file" id="ing-file" accept="video/*"></label>
+        <label>Moments to pick <input type="number" name="top" id="ing-top" value="5" min="1" max="15"></label>
+        <label style="flex:0 0 auto;flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="whole" id="ing-whole" value="true" style="width:auto"> Uploaded file is already a clip</label>
+        <button class="primary" type="submit" style="flex:0 0 auto" ${campaigns.length ? "" : "disabled"}>Add</button>
+      </form>${campaigns.length ? "" : `<p class="sub" style="margin:0">Create a campaign first.</p>`}
+    </div>
+    ${clips.length ? `<div class="scroll"><table class="table"><thead><tr><th>Clip</th><th>Campaign</th><th>Status</th><th>Added</th><th></th></tr></thead><tbody>
+      ${clips.map((c) => `<tr data-id="${c.id}"><td>${esc(c.channel || c.source)} #${c.id}</td><td>${esc(c.campaign)}</td>
+        <td><span class="pill ${label[c.status][1]}">${label[c.status][0]}</span>${c.error ? `<div class="err" style="color:var(--bad);font-size:12.5px;margin-top:4px">${esc(c.error).slice(0, 300)}</div>` : ""}${c.notes ? `<div style="font-size:12.5px;color:var(--muted)">Notes: ${esc(c.notes)}</div>` : ""}</td>
+        <td>${ago(c.created)}</td><td>${c.status === "failed" ? `<button data-act="retry">Try again</button>` : c.status === "rejected" ? `<button data-act="restore">Restore</button>` : ""}</td></tr>`).join("")}
+      </tbody></table></div>` : `<div class="empty">The queue is empty.</div>`}`;
+  $("#ingest")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    if (!fd.get("whole")) fd.set("whole", "false");
+    const r = await act(() => api("/api/ingest", { method: "POST", body: fd }));
+    if (r) { toast(r.queued === "clip" ? "Added. Editing it now." : "Added. Studio is finding the best moments."); render(); }
+  });
+}
+
+/* ---------- campaigns ---------- */
+async function renderCampaigns() {
+  campaigns = await api("/api/campaigns");
+  if (editing && !campaigns.find((c) => c.slug === editing)) editing = null;
+  const c = campaigns.find((x) => x.slug === editing) || (editing === "new" ? null : campaigns[0]);
+  if (c && !editing) editing = c.slug;
+  $("#main").innerHTML = `<h1>Campaigns</h1>
+    <p class="sub">One per Content Rewards campaign. Paste the brief, add the streamers and any logo or required clips; the director follows it for every edit. Save, then send the channels to the server.</p>
+    <div class="grid2"><div class="clist">
+      ${campaigns.map((x) => `<button data-slug="${x.slug}" aria-pressed="${x.slug === editing}"><span>${esc(x.name)}</span><span class="pill ${x.active ? "good" : ""}">${x.active ? "Active" : "Paused"}</span></button>`).join("")}
+      <button data-slug="new" aria-pressed="${editing === "new" || !campaigns.length}">+ New campaign</button>
+      <button class="primary" id="push" ${campaigns.length ? "" : "disabled"}>Send channels to server</button>
+    </div>${campaignForm(editing === "new" || !campaigns.length ? null : c)}</div>`;
+}
+function chanRow(ch = { platform: "twitch", login: "", facecam: "auto" }, i) {
+  const fc = Array.isArray(ch.facecam) ? "custom" : ch.facecam || "auto";
+  return `<div class="chanrow" data-i="${i}">
+    <select class="ch-plat">${["twitch", "kick", "youtube"].map((p) => `<option ${p === ch.platform ? "selected" : ""}>${p}</option>`).join("")}</select>
+    <input class="ch-login" value="${esc(ch.login)}" placeholder="channel name / @handle">
+    <select class="ch-fc"><option value="auto" ${fc === "auto" ? "selected" : ""}>Webcam: find automatically</option><option value="none" ${fc === "none" ? "selected" : ""}>No webcam</option>
+      <option value="custom" ${fc === "custom" ? "selected" : ""}>Webcam: my box${fc === "custom" ? " ✓" : ""}</option></select>
+    <span class="row" style="flex-wrap:nowrap;gap:6px"><button type="button" class="ch-pick" title="Draw where the webcam is" style="white-space:nowrap">Draw box</button><button type="button" class="ch-del" title="Remove">✕</button></span>
+    <input type="hidden" class="ch-box" value='${Array.isArray(ch.facecam) ? JSON.stringify(ch.facecam) : ""}'></div>`;
+}
+function assetRow(c, kind, label, accept) {
+  const has = c && c[kind + "_path"];
+  return `<div class="asset"><b style="min-width:70px">${label}</b>
+    ${has ? (kind === "logo" ? `<img src="/api/campaigns/${c.slug}/asset/logo?v=${Date.now()}" alt="logo">` : `<span class="pill good">Uploaded</span>`) : `<span class="pill">None</span>`}
+    <input type="file" data-kind="${kind}" accept="${accept}" style="max-width:260px" ${c ? "" : "disabled"}>
+    ${has ? `<button type="button" data-remove="${kind}">Remove</button>` : ""}</div>`;
+}
+function campaignForm(c) {
+  const v = (k, d = "") => esc(c?.[k] ?? d);
+  return `<form id="cform" class="card">
+    <div class="row"><label style="flex:2 1 240px">Campaign name <input name="name" value="${v("name")}" required placeholder="e.g. Energy drink – November"></label>
+      <label>Active <select name="active"><option value="true" ${c?.active !== false ? "selected" : ""}>Active</option><option value="false" ${c?.active === false ? "selected" : ""}>Paused</option></select></label></div>
+    <label>Content Rewards link <input name="url" value="${v("url")}" placeholder="https://contentrewards.com/…"></label>
+    <label>Campaign brief <span class="hint">Paste everything the campaign says: editing rules, what to show, tone, required text, banned content. The director reads all of it.</span>
+      <textarea name="brief" rows="7">${v("brief")}</textarea></label>
+    <div><h2 style="margin-bottom:8px">Streamers</h2><div id="chans" style="display:flex;flex-direction:column;gap:8px">${(c?.channels?.length ? c.channels : [undefined]).map(chanRow).join("")}</div>
+      <button type="button" id="addchan" style="margin-top:8px">+ Add streamer</button></div>
+    <div class="row">
+      <label>Min length (s) <input type="number" name="min_seconds" value="${v("min_seconds", 15)}"></label>
+      <label>Max length (s) <input type="number" name="max_seconds" value="${v("max_seconds", 60)}"></label>
+      <label>Target length (s) <input type="number" name="target_seconds" value="${v("target_seconds", 32)}"></label></div>
+    <div class="row">
+      <label style="flex:2 1 240px">Required hashtags / mentions <input name="required_text" value="${esc((c?.required_text || []).join(" "))}" placeholder="#ad @brand"></label>
+      <label>Call to action <input name="cta" value="${v("cta")}" placeholder="Link in bio"></label></div>
+    <label>Not allowed <input name="banned" value="${v("banned")}" placeholder="e.g. no swearing in captions, no competitor logos"></label>
+    <div class="row">
+      <label>Layout <select name="layout"><option value="">Director decides</option>${Object.entries(LAYOUTS).map(([k, l]) => `<option value="${k}" ${c?.layout === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label>Caption style <select name="caption_style"><option value="">Director varies it</option>${Object.entries(STYLES).map(([k, l]) => `<option value="${k}" ${c?.caption_style === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label>Hook title <select name="hook"><option value="true" ${c?.hook !== false ? "selected" : ""}>On</option><option value="false" ${c?.hook === false ? "selected" : ""}>Off</option></select></label>
+      <label>Brand colour <input type="color" name="brand_color" value="${v("brand_color", "#E8202A")}" style="height:38px;padding:3px"></label></div>
+    <div class="card" style="background:var(--raised)"><h2>Files</h2>${c ? "" : `<p class="sub" style="margin:0">Save the campaign first, then upload files.</p>`}
+      ${assetRow(c, "logo", "Logo", "image/png,image/webp,image/jpeg")}
+      <div class="row"><label>Logo corner <select name="logo_corner">${["top_right", "top_left", "bottom_right", "bottom_left"].map((k) => `<option value="${k}" ${c?.logo_corner === k ? "selected" : ""}>${k.replace("_", " ")}</option>`).join("")}</select></label>
+        <label>Logo size <input type="number" step="0.01" min="0.06" max="0.4" name="logo_scale" value="${v("logo_scale", 0.16)}"></label></div>
+      ${assetRow(c, "intro", "Intro", "video/*")}${assetRow(c, "outro", "Outro", "video/*")}${assetRow(c, "font", "Font", ".ttf,.otf")}</div>
+    <div class="actions"><button class="primary" type="submit">Save campaign</button>${c ? `<button type="button" class="bad" id="cdel">Delete</button>` : ""}</div>
+  </form>`;
+}
+function readCampaign() {
+  const f = $("#cform"), fd = new FormData(f), c = campaigns.find((x) => x.slug === editing) || {};
+  const chans = [...document.querySelectorAll(".chanrow")].map((r) => {
+    const mode = $(".ch-fc", r).value, box = $(".ch-box", r).value;
+    return { platform: $(".ch-plat", r).value, login: $(".ch-login", r).value,
+             facecam: mode === "custom" && box ? JSON.parse(box) : mode === "custom" ? "auto" : mode };
+  }).filter((x) => x.login.trim());
+  return { ...c, slug: c.slug, name: fd.get("name"), url: fd.get("url"), brief: fd.get("brief"), active: fd.get("active") === "true",
+    channels: chans, min_seconds: +fd.get("min_seconds"), max_seconds: +fd.get("max_seconds"), target_seconds: +fd.get("target_seconds"),
+    required_text: String(fd.get("required_text") || "").split(/\s+/).filter(Boolean), cta: fd.get("cta"), banned: fd.get("banned"),
+    layout: fd.get("layout") || null, caption_style: fd.get("caption_style") || null, hook: fd.get("hook") === "true",
+    brand_color: fd.get("brand_color"), logo_corner: fd.get("logo_corner"), logo_scale: +fd.get("logo_scale") };
+}
+
+/* webcam box picker */
+function openPicker(row) {
+  const c = campaigns.find((x) => x.slug === editing);
+  const ch = `${$(".ch-plat", row).value}:${$(".ch-login", row).value.trim().toLowerCase()}`;
+  if (!c) return toast("Save the campaign first");
+  const m = $("#modal"); m.hidden = false;
+  m.innerHTML = `<div class="card"><h2>Draw the webcam box for ${esc(ch)}</h2>
+    <p class="sub" style="margin:0">Drag a rectangle around the streamer's webcam. It's used for "facecam on top" on every clip from this streamer.</p>
+    <div class="pick" id="pick"><img id="pimg" alt="Frame from this streamer" src="/api/campaigns/${c.slug}/frame?channel=${encodeURIComponent(ch)}"><div class="box" id="pbox" hidden></div></div>
+    <div class="actions"><button class="primary" id="psave" disabled>Use this box</button><button id="pcancel">Cancel</button></div></div>`;
+  const img = $("#pimg"), box = $("#pbox"); let start = null, rect = null;
+  img.onerror = () => { $("#pick").innerHTML = `<div class="empty">No clip from this streamer yet. Once the server captures one, come back to draw the box.</div>`; };
+  const pos = (e) => { const r = img.getBoundingClientRect(); return [Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1), Math.min(Math.max((e.clientY - r.top) / r.height, 0), 1)]; };
+  const draw = () => { box.hidden = false; Object.assign(box.style, { left: rect[0] * 100 + "%", top: rect[1] * 100 + "%", width: rect[2] * 100 + "%", height: rect[3] * 100 + "%" }); };
+  $("#pick").onpointerdown = (e) => { start = pos(e); e.target.setPointerCapture?.(e.pointerId); };
+  $("#pick").onpointermove = (e) => { if (!start) return; const p = pos(e);
+    rect = [Math.min(start[0], p[0]), Math.min(start[1], p[1]), Math.abs(p[0] - start[0]), Math.abs(p[1] - start[1])]; draw(); };
+  $("#pick").onpointerup = () => { start = null; $("#psave").disabled = !(rect && rect[2] > 0.03 && rect[3] > 0.03); };
+  $("#pcancel").onclick = () => (m.hidden = true);
+  $("#psave").onclick = () => { $(".ch-box", row).value = JSON.stringify(rect.map((v) => +v.toFixed(4))); $(".ch-fc", row).value = "custom"; m.hidden = true; toast("Box set. Save the campaign to keep it."); };
+}
+
+/* ---------- server ---------- */
+async function renderServer() {
+  $("#main").innerHTML = `<h1>Server</h1><p class="sub">Your Oracle server watches the streams and captures hype moments.</p><div class="empty">Checking…</div>`;
+  const h = await api("/api/server/health");
+  if (!h.connected) { $("#main").innerHTML = `<h1>Server</h1><div class="empty"><b>Not connected.</b><br>${esc(h.error)}<br><br><a href="#prefs">Open Settings</a></div>`; return; }
+  $("#main").innerHTML = `<h1>Server</h1>
+    <p class="sub">${h.recording}/${h.max_recording} streams recording · ${h.disk_free_gb} GB free${h.low_disk ? " · <b>disk almost full, recording paused</b>" : ""}</p>
+    <div class="actions" style="margin-bottom:14px"><button id="syncnow" class="primary">Check for new captures now</button></div>
+    <div class="scroll"><table class="table"><thead><tr><th>Streamer</th><th>Live</th><th>Recording</th><th>Chat</th><th>Moments this hour</th><th>Campaigns</th></tr></thead><tbody>
+    ${h.channels.map((c) => `<tr><td><b>${esc(c.channel)}</b><div style="font-size:12px;color:var(--muted)">${esc(c.title || "")}</div></td>
+      <td>${c.live === null ? `<span class="pill">Unknown</span>` : c.live ? `<span class="pill bad">● Live</span>` : `<span class="pill">Offline</span>`}</td>
+      <td>${c.recording ? `<span class="pill good">Yes</span>` : "No"}</td><td>${c.chat ? "Connected" : "–"}</td><td>${c.moments_1h}</td><td>${esc(c.campaigns.join(", "))}</td></tr>`).join("")}
+    </tbody></table></div>`;
+}
+
+/* ---------- settings ---------- */
+async function renderPrefs() {
+  const s = await api("/api/settings");
+  $("#main").innerHTML = `<h1>Settings</h1><p class="sub">Saved on this PC only.</p>
+  <form id="sform" class="card" style="max-width:760px">
+    <h2>Oracle server</h2>
+    <div class="row"><label style="flex:2 1 260px">Server address <input name="server_url" value="${esc(s.server_url)}" placeholder="http://100.x.y.z:8787"></label>
+      <label>Token <input name="token" value="${esc(s.token)}" placeholder="from the server"></label></div>
+    <label>Check for new captures every (minutes) <input type="number" name="poll_minutes" value="${esc(s.poll_minutes)}" min="1"></label>
+    <h2>AI director</h2>
+    <p class="sub" style="margin:0">With an Anthropic API key, Claude watches frames from each clip, reads the transcript and your brief, and plans the edit and writes the hook and caption (roughly 3–6 US cents per clip). Without a key, a simpler rule-based editor is used.</p>
+    <div class="row"><label style="flex:2 1 260px">Anthropic API key <input name="anthropic_api_key" value="${esc(s.anthropic_api_key)}" placeholder="sk-ant-…" autocomplete="off"></label>
+      <label>Director <select name="director"><option value="ai" ${s.director === "ai" ? "selected" : ""}>AI (needs key)</option><option value="rules" ${s.director === "rules" ? "selected" : ""}>Rule-based</option></select></label></div>
+    <div class="row"><label>Model <input name="model" value="${esc(s.model)}"></label>
+      <label>Effort <select name="effort">${["low", "medium", "high"].map((e) => `<option ${e === s.effort ? "selected" : ""}>${e}</option>`).join("")}</select></label></div>
+    <h2>Editing</h2>
+    <div class="row"><label>Video encoder <select name="encoder">${["auto", "h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox", "libx264"].map((e) => `<option ${e === s.encoder ? "selected" : ""}>${e}</option>`).join("")}</select></label>
+      <label>Caption accuracy <select name="whisper_model">${[["base", "Fast"], ["small", "Balanced"], ["medium", "Best (slow)"]].map(([k, l]) => `<option value="${k}" ${k === s.whisper_model ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label>Output folder <input name="output_dir" value="${esc(s.output_dir)}"></label></div>
+    <div class="actions"><button class="primary" type="submit">Save settings</button></div>
+  </form>`;
+}
+
+/* ---------- routing + events ---------- */
+const PAGES = { review: renderReview, ready: renderReady, queue: renderQueue, campaigns: renderCampaigns, server: renderServer, prefs: renderPrefs };
+async function render() {
+  page = (location.hash || "#review").slice(1); if (!PAGES[page]) page = "review";
+  document.querySelectorAll("nav a").forEach((a) => a.dataset.page === page ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  try { await PAGES[page](); } catch (e) { $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+window.addEventListener("hashchange", render);
+
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const card = b.closest("[data-id]");
+  if (page === "review" && b.dataset.act && card) return reviewAction(+card.dataset.id, b.dataset.act);
+  if (page === "ready" && b.dataset.act && card) return readyAction(+card.dataset.id, b.dataset.act);
+  if (page === "queue" && card && b.dataset.act) { await act(() => api(`/api/clips/${card.dataset.id}/${b.dataset.act}`, { method: "POST" }), "Queued"); return render(); }
+  if (page === "campaigns") {
+    if (b.dataset.slug) { editing = b.dataset.slug; return render(); }
+    if (b.id === "addchan") { $("#chans").insertAdjacentHTML("beforeend", chanRow(undefined, document.querySelectorAll(".chanrow").length)); return; }
+    if (b.classList.contains("ch-del")) { b.closest(".chanrow").remove(); return; }
+    if (b.classList.contains("ch-pick")) return openPicker(b.closest(".chanrow"));
+    if (b.dataset.remove) { await act(() => api(`/api/campaigns/${editing}/asset/${b.dataset.remove}`, { method: "DELETE" }), "Removed"); return render(); }
+    if (b.id === "cdel") { if (b.dataset.sure) { await act(() => api(`/api/campaigns/${editing}`, { method: "DELETE" }), "Deleted"); editing = null; return render(); }
+      b.dataset.sure = 1; b.textContent = "Click again to delete"; return; }
+    if (b.id === "push") return act(() => api("/api/campaigns/push", { method: "POST" }), "Sent. The server restarts and starts watching these streamers.");
+  }
+  if (page === "server" && b.id === "syncnow") { const r = await act(() => api("/api/sync", { method: "POST" })); if (r) toast(r.error ? r.error : `${r.new} new clip(s) added`); refreshState(); }
+});
+document.addEventListener("submit", async (e) => {
+  if (e.target.id === "cform") { e.preventDefault();
+    const saved = await act(() => api("/api/campaigns", { method: "POST", body: readCampaign() }), "Campaign saved");
+    if (saved) { editing = saved.slug; render(); } }
+  if (e.target.id === "sform") { e.preventDefault();
+    const fd = Object.fromEntries(new FormData(e.target)); fd.poll_minutes = +fd.poll_minutes;
+    await act(() => api("/api/settings", { method: "PUT", body: fd }), "Settings saved"); refreshState(); render(); }
+});
+document.addEventListener("change", async (e) => {
+  const inp = e.target;
+  if (page === "campaigns" && inp.type === "file" && inp.dataset.kind && inp.files[0]) {
+    const fd = new FormData(); fd.append("kind", inp.dataset.kind); fd.append("file", inp.files[0]);
+    await act(() => api(`/api/campaigns/${editing}/asset`, { method: "POST", body: fd }), "Uploaded"); render();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (page !== "review" || e.target.closest("input, textarea, select") || e.metaKey || e.ctrlKey || e.altKey) return;
+  const list = cache.review || []; const c = list[focus]; if (!c && e.key !== "j" && e.key !== "k") return;
+  const move = (d) => { focus = Math.max(0, Math.min(list.length - 1, focus + d));
+    document.querySelectorAll(".clip").forEach((el, i) => el.classList.toggle("focus", i === focus));
+    document.querySelector(`.clip[data-i="${focus}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" }); };
+  if (e.key === "j") move(1); else if (e.key === "k") move(-1);
+  else if (e.key === "a") reviewAction(c.id, "approve"); else if (e.key === "r") reviewAction(c.id, "reject");
+  else if (e.key === "e") { e.preventDefault(); $(`#notes-${c.id}`)?.focus(); }
+});
+
+render(); refreshState();
+setInterval(refreshState, 4000);
+setInterval(() => { if (["review", "queue"].includes(page) && !document.querySelector("input:focus, textarea:focus, select:focus") && ![...document.querySelectorAll("video")].some((v) => !v.paused)) render(); }, 15000);
+</script>
+</body>
+</html>

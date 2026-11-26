@@ -9,7 +9,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import secrets
+import sys
 import shutil
 import time
 from datetime import datetime
@@ -68,6 +70,8 @@ class Watcher:
         self._audio_slots = asyncio.Semaphore(4)
         self._seen_viewer_clips: set[str] = set()
         self.started = time.time()
+        self.restart = False
+        self._server = None
 
     # ---- helpers -------------------------------------------------------------------
     def _record_cmd(self, channel: str) -> list[str]:
@@ -249,6 +253,12 @@ class Watcher:
                 t.cancel()
             await self.pool.stop_all()
 
+    def request_restart(self) -> None:
+        """Stop cleanly (recorders included), then main() starts a fresh process with the new campaigns."""
+        self.restart = True
+        if self._server is not None:
+            asyncio.get_running_loop().call_later(0.5, setattr, self._server, "should_exit", True)
+
     async def serve_api(self) -> None:
         import uvicorn
         from watcher.api import create_app
@@ -256,7 +266,8 @@ class Watcher:
         cfg = uvicorn.Config(create_app(self, token), host=self.s.api.host, port=self.s.api.port,
                              log_level="warning", lifespan="off")
         log.info("dashboard: http://<this-server>:%d/?token=%s", self.s.api.port, token)
-        await uvicorn.Server(cfg).serve()
+        self._server = uvicorn.Server(cfg)
+        await self._server.serve()
 
 
 def _log_crash(task: asyncio.Task) -> None:
@@ -295,12 +306,18 @@ def main() -> None:
         s.campaigns = [config.Campaign("adhoc", True, refs)]
     source = fake_cmd(args.fake_source) if args.fake_source else None
 
+    holder = {}
+
     async def go():
-        await Watcher(s, record=not args.no_record, source_cmd=source).run(api=not args.no_api)
+        holder["w"] = Watcher(s, record=not args.no_record, source_cmd=source)
+        await holder["w"].run(api=not args.no_api)
     try:
         asyncio.run(go())
     except KeyboardInterrupt:
-        pass
+        return
+    if holder.get("w") and holder["w"].restart:
+        log.info("campaigns changed: restarting")
+        os.execv(sys.executable, [sys.executable, "-m", "watcher.app", *sys.argv[1:]])
 
 
 if __name__ == "__main__":

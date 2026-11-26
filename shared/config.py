@@ -96,6 +96,7 @@ class Settings:
     api: ApiConfig = field(default_factory=ApiConfig)
     kick: KickConfig = field(default_factory=KickConfig)
     youtube: YouTubeConfig = field(default_factory=YouTubeConfig)
+    root: Path = Path(".")        # folder holding settings.yaml / campaigns.yaml
 
     def campaign(self, name: str) -> Campaign | None:
         return next((c for c in self.campaigns if c.name == name), None)
@@ -167,4 +168,29 @@ def load(root: Path | str = ".") -> Settings:
         api=_make(ApiConfig, s.get("api")),
         kick=_make(KickConfig, s.get("kick")),
         youtube=_make(YouTubeConfig, s.get("youtube")),
+        root=root,
     )
+
+
+def write_campaigns(root: Path | str, campaigns: list[dict]) -> Path:
+    """Save campaigns sent from the Studio dashboard (keeps a .bak of the previous file)."""
+    root = Path(root)
+    path = root / "campaigns.yaml"
+    if path.exists():
+        path.with_suffix(".yaml.bak").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    clean = []
+    for c in campaigns:
+        name = str(c.get("name", "")).strip()
+        if not name:
+            continue
+        clean.append({
+            "name": name, "active": bool(c.get("active", True)),
+            "channels": [{"platform": str(ch["platform"]).lower(), "login": str(ch["login"])}
+                         for ch in c.get("channels") or [] if ch.get("platform") and ch.get("login")],
+            "clip": {"min_seconds": int(c.get("min_seconds") or 15), "max_seconds": int(c.get("max_seconds") or 60)},
+            "required_text": [str(t) for t in c.get("required_text") or []],
+            "extra_hype_tokens": [str(t) for t in c.get("extra_hype_tokens") or []],
+        })
+    path.write_text("# Written by Clipping Studio. Edit campaigns in the Studio dashboard.\n"
+                    + yaml.safe_dump({"campaigns": clean}, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return path

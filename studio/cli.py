@@ -1,5 +1,6 @@
 """Studio command line.
 
+    python -m studio app                # the dashboard (http://localhost:8790): campaigns, review, approve
     python -m studio check              # is everything set up? (ffmpeg, encoder, whisper, server)
     python -m studio run                # normal mode: download approved clips + edit them, every few minutes
     python -m studio sync               # just download approved clips
@@ -42,8 +43,16 @@ def cmd_check(cfg, _args) -> None:
     print("whisper:  ", f"ok (model {cfg['captions']['whisper_model']})" if transcribe.available()
           else "not installed: pip install faster-whisper (clips will have no captions)")
     print("output:   ", cfg["output_dir"].resolve())
+    server_url, token = cfg["server_url"], cfg["token"]
+    data = Path("studio_data")
+    if (data / "studio.db").exists():          # the dashboard's settings win over studio.yaml
+        from studio.store import Store
+        st = Store(data).settings()
+        server_url, token = st.get("server_url") or server_url, st.get("token") or token
+        print("director: ", "AI (key set)" if st.get("anthropic_api_key") else "rule-based (add an Anthropic key in Settings)")
+        print("campaigns:", ", ".join(c["name"] for c in Store(data).campaigns()) or "none yet")
     try:
-        camps = Client(cfg["server_url"], cfg["token"]).get("/api/campaigns")
+        camps = Client(server_url, token).get("/api/campaigns")
         print("server:   ", f"ok, {len(camps)} campaigns: {', '.join(c['name'] for c in camps)}")
     except ServerError as e:
         print("server:   ", e)
@@ -100,6 +109,10 @@ def main(argv=None) -> None:
     p.add_argument("--config", default="studio.yaml")
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
+    ap = sub.add_parser("app", help="open the dashboard")
+    ap.add_argument("--port", type=int, default=8790)
+    ap.add_argument("--data", default="studio_data", help="where campaigns and clips are kept")
+    ap.add_argument("--no-browser", action="store_true")
     sub.add_parser("check")
     sub.add_parser("sync")
     sub.add_parser("run")
@@ -118,6 +131,9 @@ def main(argv=None) -> None:
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
+    if args.cmd == "app":
+        from studio.app import main as app_main
+        return app_main(args.data, args.port, not args.no_browser)
     cfg = config.load(args.config)
     try:
         {"check": cmd_check, "sync": cmd_sync, "run": cmd_run, "edit": cmd_edit, "vod": cmd_vod,

@@ -69,7 +69,9 @@ class CaptionTests(unittest.TestCase):
         self.assertTrue(dialogue)
         # "no" ends before the kept part starts, so the first line begins at "way", at t=0
         self.assertTrue(dialogue[0].startswith("Dialogue: 0,0:00:00.00,"), dialogue[0])
-        self.assertIn("{\\c&H001FD2FF&}WAY{\\c&H00FFFFFF&} HE ACTUALLY", dialogue[0])   # #FFD21F in ASS BGR
+        # the spoken word is coloured (#FFD21F in ASS BGR) and pops; the rest of the line follows
+        self.assertIn("{\\c&H001FD2FF&", dialogue[0])
+        self.assertIn("}WAY{\\c&H00FFFFFF&\\fscx100\\fscy100} HE ACTUALLY", dialogue[0])
         ends = [l.split(",")[2] for l in dialogue]
         starts = [l.split(",")[1] for l in dialogue]
         self.assertTrue(all(e <= s for e, s in zip(ends, starts[1:])), "caption lines overlap")

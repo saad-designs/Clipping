@@ -50,14 +50,13 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist studio.yaml copy studio.example.yaml studio.yaml >nul
 echo.
 echo ==========================================================
-echo  Almost done. Notepad will open studio.yaml.
-echo  Fill in these two lines, then save (Ctrl+S) and close:
-echo    server_url: "http://YOUR-SERVER-TAILSCALE-IP:8787"
-echo    token: "THE-TOKEN-YOUR-SERVER-PRINTED"
-echo  Then double-click "Check setup.bat".
+echo  Setup finished.
+echo  Double-click "Start Studio.bat". Your browser opens the dashboard.
+echo  In the dashboard:
+echo    1. Settings: paste your server address and token (and your
+echo       Anthropic API key for the AI director)
+echo    2. Campaigns: add your campaign, paste the brief, add streamers
 echo ==========================================================
-notepad studio.yaml
 pause

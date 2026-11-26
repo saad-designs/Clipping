@@ -52,9 +52,9 @@ for _ in $(seq 1 10); do [ -f "$TOKEN_FILE" ] && break; sleep 1; done
 cat <<MSG
 
 Done. Next:
-  1. Edit your campaigns:   sudo nano $APP/campaigns.yaml
-     and Twitch keys:        sudo nano $APP/settings.yaml
+  1. Twitch keys:           sudo nano $APP/settings.yaml
      then:                   sudo systemctl restart clipping-watcher
+     Campaigns are added in Clipping Studio on your PC ("Send channels to server").
   2. Private access with Tailscale (no ports opened to the internet):
        curl -fsSL https://tailscale.com/install.sh | sh
        sudo tailscale up

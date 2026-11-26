@@ -2,13 +2,13 @@
 
 A two-part system for Content Rewards clipping campaigns:
 
-- **Watcher** runs 24/7 on an Oracle Cloud VM. It watches Twitch, Kick and YouTube Live streams, detects hype moments from chat and audio, keeps a rolling recording, and cuts a clip of every moment. A review dashboard lets you approve or reject each one, from your laptop or phone.
-- **Studio** runs on your laptop. It downloads approved clips, turns them into 9:16 vertical videos with word-by-word captions, and files them by campaign, ready for you to upload. It can also pull the best moments out of a finished VOD or podcast.
+- **Watcher** runs 24/7 on an Oracle Cloud VM. It watches Twitch, Kick and YouTube Live streams, detects hype moments from chat and audio, keeps a rolling recording, and cuts a clip of every moment. Its own dashboard shows what it is watching and recording.
+- **Studio** runs on your PC as a dashboard in the browser (http://localhost:8790). You set up each campaign there: brief, streamers, logo, rules. It pulls every captured moment, and an **AI director** (Claude) plans each edit: facecam on top / game below, big animated captions, a hook title, zoom and sound hits on the moment, logo, and the post caption, with a different style per clip. You approve the final edit in **Review**, then upload from **Ready to upload**. It can also pick the best moments out of a VOD or any long video.
 
 ```
-Stream ──► Watcher (Oracle) ──► moment + clip ──► Dashboard: approve ──► Studio (laptop)
-                                                                          │
-                       Campaigns/<campaign>/ready/clip.mp4 + caption.txt ◄┘ ──► you upload
+Stream ──► Watcher (Oracle) ──► captured clip ──► Studio (PC): director plans ──► render ──► Review
+                                                                                              │ approve
+                         Campaigns/<campaign>/ready/clip.mp4 + caption.txt  ◄─────────────────┘ ──► you upload
 ```
 
 **New here? Follow [ORACLE_SETUP.md](ORACLE_SETUP.md): click-by-click setup for the Oracle server and your Windows PC. On Windows, everything runs from double-click files in the `windows` folder.**

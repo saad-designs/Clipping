@@ -5,10 +5,9 @@ import json
 import logging
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 
-from studio.editor import captions, encode, reframe, transcribe, trim
+from studio.editor import transcribe
 
 log = logging.getLogger("editor")
 
@@ -39,70 +38,56 @@ def hook_line(words: list[transcribe.Word], start: float, end: float) -> str:
     return _shorten(text)
 
 
+LAYOUT_ALIASES = {"blur": "blur_fit", "crop": "game_only", "facecam": "facecam_split"}
+
+
 def edit(src: Path, cfg: dict, layout: str | None = None) -> Path:
-    """Edit one inbox clip. Returns the finished mp4 path."""
+    """Edit one inbox clip (command-line path; the dashboard uses studio.worker). Returns the mp4."""
+    import os
+
+    from studio import director
+    from studio.editor import facecam as facecam_mod
+    from studio.editor import render
+
     side_path = src.with_suffix(".json")
     meta = json.loads(side_path.read_text(encoding="utf-8")) if side_path.exists() else {}
     rules = meta.get("rules") or {}
     ed, cap = cfg["editing"], cfg["captions"]
     duration, has_audio = probe(src)
-
     words = transcribe.transcribe(src, cap["whisper_model"], cap.get("language")) \
         if cap.get("enabled", True) and has_audio else []
-    start, end = trim.choose_window(duration, meta.get("moment_offset"), rules.get("min_seconds"),
-                                    rules.get("max_seconds"), float(ed["target_seconds"]), words)
 
-    layout = layout or rules.get("layout") or ed["layout"]
-    fc = cfg.get("facecam", {}).get(meta.get("channel", ""))
-    if layout == "facecam" and not fc:
-        log.warning("no facecam rectangle set for %s in studio.yaml; using blur layout", meta.get("channel"))
-        layout = "blur"
-    graph = reframe.build(layout, int(ed["fps"]), float(ed.get("blur_zoom", 1.25)), fc)
+    channel = meta.get("channel", "")
+    manual = cfg.get("facecam", {}).get(channel)
+    fc = {"kind": "webcam", "cam": manual["cam"], "source": "manual"} if manual and manual.get("cam") \
+        else facecam_mod.detect(src).to_dict()
+    layout = layout or rules.get("layout") or ed.get("layout")
+    campaign = {"name": meta.get("campaign", ""), "min_seconds": rules.get("min_seconds"),
+                "max_seconds": rules.get("max_seconds"), "target_seconds": ed.get("target_seconds", 32),
+                "required_text": rules.get("required_text") or [],
+                "layout": LAYOUT_ALIASES.get(layout, layout) if layout and layout != "auto" else None}
+    ctx = director.build_context({**meta, "channel": channel}, campaign, words, fc, duration)
+    plan = director.plan(ctx, src, {"anthropic_api_key": os.environ.get("ANTHROPIC_API_KEY", ""),
+                                    "director": "ai", "model": cfg.get("model"), "effort": cfg.get("effort")})
 
     ready_dir = src.parent.parent / "ready"
-    ready_dir.mkdir(parents=True, exist_ok=True)
     out = ready_dir / src.name
-    enc = encode.pick(ed.get("encoder", "auto"))
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
-        if words:
-            (tmp / "captions.ass").write_text(captions.build_ass(words, start, end, cap), encoding="utf-8")
-            # run ffmpeg inside tmp and use a bare file name: avoids Windows drive-letter escaping in filters
-            graph = graph.replace("[v]", "[pre];[pre]ass=captions.ass[v]")
-        if has_audio:
-            graph += ";[0:a]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[a]"
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}",
-               "-i", str(src.resolve()), "-filter_complex", graph, "-map", "[v]"]
-        if has_audio:
-            cmd += ["-map", "[a]", "-c:a", "aac", "-b:a", "192k"]
-        cmd += [*encode.video_args(enc), "-movflags", "+faststart", str(tmp / "out.mp4")]
-        r = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True)
-        if r.returncode != 0 and enc != "libx264":
-            log.warning("%s failed, retrying with libx264: %s", enc, r.stderr[-300:])
-            i = cmd.index("-c:v")
-            cmd[i:i + len(encode.video_args(enc))] = encode.video_args("libx264")
-            r = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True)
-        if r.returncode != 0:
-            raise RuntimeError(f"ffmpeg failed: {r.stderr[-800:]}")
-        shutil.move(str(tmp / "out.mp4"), out)
-
-    hook = hook_line(words, start, end)
-    required = " ".join(rules.get("required_text") or [])
-    streamer = meta.get("channel", "").split(":")[-1]
-    caption_txt = "\n\n".join(x for x in [hook, f"🎥 {streamer}" if streamer else "", required] if x)
-    out.with_suffix(".caption.txt").write_text(caption_txt + "\n", encoding="utf-8")
+    render.render(src, plan, out, campaign, words, plan.get("facecam") or fc, cap, ed.get("encoder", "auto"),
+                  int(ed.get("fps", 30)))
+    post = plan["post"]
+    text = "\n\n".join(x for x in [post.get("title", ""), post.get("caption", ""), " ".join(post.get("hashtags") or [])] if x)
+    out.with_suffix(".caption.txt").write_text(text + "\n", encoding="utf-8")
     out.with_suffix(".json").write_text(json.dumps({
-        **meta, "kept": [start, end], "length": round(end - start, 2), "layout": layout,
-        "captions": bool(words), "encoder": enc, "transcript": " ".join(w.text for w in words),
-    }, indent=2), encoding="utf-8")
+        **meta, "kept": plan["keep"], "length": round(plan["keep"][1] - plan["keep"][0], 2), "layout": plan["layout"],
+        "captions": bool(words), "plan": plan, "transcript": " ".join(w.text for w in words),
+    }, indent=2, default=str), encoding="utf-8")
 
     done = src.parent / "done"
     done.mkdir(exist_ok=True)
     shutil.move(str(src), done / src.name)
     if side_path.exists():
         shutil.move(str(side_path), done / side_path.name)
-    log.info("✅ ready: %s  (%.0fs, %s, captions %s)", out, end - start, layout, "on" if words else "off")
+    log.info("✅ ready: %s  (%.0fs, %s)", out, plan["keep"][1] - plan["keep"][0], plan["layout"])
     return out
 
 

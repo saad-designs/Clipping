@@ -15,8 +15,8 @@ captions:
   enabled: true
   whisper_model: small      # tiny / base / small / medium. Bigger = more accurate, slower
   language: null            # null = auto-detect; "en" is faster if you know it
-  font: Arial               # any font installed on the laptop
-  size: 96
+  font: Inter Black         # bundled; or any font installed on the PC
+  size: 104
   words_per_line: 3
   uppercase: true
   highlight_color: "#FFD21F"   # the word being spoken

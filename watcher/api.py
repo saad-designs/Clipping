@@ -87,6 +87,18 @@ def create_app(watcher, token: str) -> FastAPI:
         db.update(mid, body.status, body.campaigns)
         return moment_json(_get(mid))
 
+    @app.put("/api/campaigns", dependencies=[Depends(auth)])
+    async def put_campaigns(body: dict):
+        """Campaigns from the Studio dashboard: save them, then restart to watch the new channels."""
+        from shared import config
+        items = body.get("campaigns")
+        if not isinstance(items, list):
+            raise HTTPException(400, "expected {\"campaigns\": [...]}")
+        path = config.write_campaigns(watcher.s.root, items)
+        watcher.request_restart()
+        n = sum(len(c.get("channels") or []) for c in items)
+        return {"ok": True, "saved": str(path), "campaigns": len(items), "channels": n, "restarting": True}
+
     @app.post("/api/moments/{mid}/downloaded", dependencies=[Depends(auth)])
     async def downloaded(mid: int):
         _get(mid)

@@ -9,3 +9,5 @@ settings.yaml
 
 # Studio (laptop)
 studio.yaml
+studio_data/
+Campaigns/

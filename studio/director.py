@@ -1,0 +1,358 @@
+"""The director: decides how each clip is edited.
+
+It reads the campaign brief and rules, the word-timed transcript, how chat reacted, where
+the streamer's webcam is, and looks at frames from the clip. It returns an edit plan:
+what to keep, layout, hook title, caption style, words to emphasise, zoom punch-ins,
+sound hits, logo, and the post title/caption/hashtags.
+
+With an Anthropic API key, Claude makes these decisions. Without one (or if the call
+fails), a rule-based director makes a sensible, varied plan so editing never stops.
+`validate()` runs on every plan either way and enforces the campaign's hard rules.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import random
+import re
+import subprocess
+
+from studio.editor import trim
+from studio.editor.captions import PRESETS
+from studio.editor.render import SFX
+from studio.editor.transcribe import Word
+
+log = logging.getLogger("director")
+
+LAYOUTS = ["facecam_split", "face_crop", "blur_fit", "game_only"]
+CORNERS = ["top_left", "top_right", "bottom_left", "bottom_right", "none"]
+STYLES = list(PRESETS)
+SOUNDS = sorted(SFX) or ["boom", "whoosh", "pop", "riser", "ding", "bass_drop"]
+DEFAULT_MODEL = "claude-opus-5-5"
+
+PLAN_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["keep_start", "keep_end", "layout", "game_x", "webcam_box", "hook_text", "hook_seconds",
+                 "caption_style", "emphasis_words", "zooms", "sfx", "logo_corner", "post_title", "post_caption",
+                 "hashtags", "why", "quality", "skip", "skip_reason"],
+    "properties": {
+        "keep_start": {"type": "number", "description": "seconds into the source clip where the edit starts"},
+        "keep_end": {"type": "number", "description": "seconds into the source clip where the edit ends"},
+        "layout": {"type": "string", "enum": LAYOUTS},
+        "game_x": {"type": "number", "description": "0..1 horizontal focus of the gameplay crop (0.5 = centre)"},
+        "webcam_box": {
+            "type": "object", "additionalProperties": False, "required": ["present", "x", "y", "w", "h"],
+            "properties": {"present": {"type": "boolean"}, "x": {"type": "number"}, "y": {"type": "number"},
+                           "w": {"type": "number"}, "h": {"type": "number"}},
+            "description": "the streamer's webcam overlay as fractions of the frame (0..1), if one is visible",
+        },
+        "hook_text": {"type": "string", "description": "title shown at the top for the first seconds; 2-7 words; '' for none"},
+        "hook_seconds": {"type": "number"},
+        "caption_style": {"type": "string", "enum": STYLES},
+        "emphasis_words": {"type": "array", "items": {"type": "string"}},
+        "zooms": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "required": ["at", "strength"],
+            "properties": {"at": {"type": "number"}, "strength": {"type": "number"}}}},
+        "sfx": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "required": ["at", "sound"],
+            "properties": {"at": {"type": "number"}, "sound": {"type": "string", "enum": SOUNDS}}}},
+        "logo_corner": {"type": "string", "enum": CORNERS},
+        "post_title": {"type": "string"},
+        "post_caption": {"type": "string"},
+        "hashtags": {"type": "array", "items": {"type": "string"}},
+        "why": {"type": "string", "description": "one sentence: why these editing choices fit this clip"},
+        "quality": {"type": "integer", "description": "1-10: how likely this clip is to do well"},
+        "skip": {"type": "boolean"},
+        "skip_reason": {"type": "string"},
+    },
+}
+
+SYSTEM = """You are the lead editor of a short-form clipping channel. Streams are monitored automatically; when chat and audio spike, a ~1 minute clip is captured. Your job: turn each captured clip into a vertical (9:16) Short / TikTok / Reel that people watch to the end, for a paid clipping campaign.
+
+Priorities, in order:
+1. The campaign brief's requirements are hard rules (required text, hashtags, tags, logo, tone, banned content, length). Never break them.
+2. Start strong: begin at most ~1 second before the first interesting line or action. Cut dead air at the start. End right after the reaction lands; don't trail off.
+3. Make it feel edited, not just cropped, but don't overdo it. Pick what THIS clip needs:
+   - layout: "facecam_split" (webcam on top, gameplay below) when a webcam overlay is visible and the streamer's reaction matters; "face_crop" for just-chatting/IRL where the person fills the frame; "game_only" when the action is in the middle of the screen and the webcam doesn't matter; "blur_fit" when the whole wide frame must stay visible.
+   - hook_text: a short, punchy title (2-7 words) that creates curiosity about what's coming, written like a viral Short. True to the clip: no lies, no fake drama. Use the language the campaign asks for; otherwise the language spoken in the clip. No emoji (they're added to the post caption instead). Leave empty if a hook would hurt.
+   - caption_style: vary between clips. Avoid repeating the styles listed as recently used, unless the brief asks for one look.
+   - emphasis_words: 1-4 words from the transcript that carry the punchline or emotion.
+   - zooms: 0-3 punch-ins exactly when the reaction or key moment hits (strength 0.08-0.22).
+   - sfx: 0-3 sounds that support a beat (e.g. "boom"/"bass_drop" on the payoff, "whoosh" on a cut-in, "pop" on a reveal, "riser" before a payoff, "ding" on a correct/clean moment). Silence is fine when the audio already hits.
+4. Post text: post_title (short), post_caption (one or two lines in the creator-friendly voice of the campaign, may include emoji), hashtags (include every hashtag the brief requires).
+5. Be honest in quality (1-10). Set skip=true with a reason if the clip is unusable (nothing happens, breaks the brief, offensive, mostly ads/menus).
+
+All times are seconds in the SOURCE clip's timeline. The detected moment (when chat exploded, already shifted back for chat delay) is given; the payoff is usually close to it. The webcam_box is your read of where the streamer's webcam overlay is in the frames (fractions 0..1 of the full frame); set present=false if there is none."""
+
+
+# --------------------------------------------------------------------------- context
+def frame_jpegs(path, times: list[float], width: int = 512) -> list[bytes]:
+    out = []
+    for t in times:
+        r = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{max(t, 0):.2f}", "-i", str(path),
+                            "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", "-f", "image2", "-c:v", "mjpeg", "-"],
+                           capture_output=True)
+        if r.stdout:
+            out.append(r.stdout)
+    return out
+
+
+def transcript_text(words: list[Word]) -> str:
+    """Compact word-timed transcript: '[3.2] no way [3.9] he actually ...' every few words."""
+    parts, last = [], -10.0
+    for w in words:
+        if w.start - last >= 1.5:
+            parts.append(f"[{w.start:.1f}]")
+            last = w.start
+        parts.append(w.text)
+    return " ".join(parts)
+
+
+def build_context(clip: dict, campaign: dict, words: list[Word], facecam: dict | None, duration: float,
+                  recent_styles: list[str] | None = None, notes: str = "", previous_plan: dict | None = None) -> dict:
+    m = clip.get("moment_offset")
+    moment = float(m) if m is not None else duration / 2
+    return {
+        "duration": round(duration, 2), "moment": round(moment, 2), "channel": clip.get("channel", ""),
+        "signals": clip.get("signals") or {}, "words": words, "facecam": facecam or {"kind": "none"},
+        "recent_styles": recent_styles or [], "notes": notes, "previous_plan": previous_plan,
+        "campaign": campaign,
+    }
+
+
+# --------------------------------------------------------------------------- AI director
+def _user_content(ctx: dict, frames: list[bytes], frame_times: list[float]) -> list[dict]:
+    c = ctx["campaign"]
+    brief = {
+        "campaign": c.get("name"), "brief": c.get("brief", ""), "min_seconds": c.get("min_seconds"),
+        "max_seconds": c.get("max_seconds"), "required_text": c.get("required_text", []),
+        "cta": c.get("cta", ""), "banned": c.get("banned", ""), "has_logo": bool(c.get("logo_path")),
+        "preferred_layout": c.get("layout") or "director decides",
+        "preferred_caption_style": c.get("caption_style") or "director decides (vary)",
+        "hook_enabled": c.get("hook", True),
+    }
+    fc = ctx["facecam"]
+    info = {
+        "clip_seconds": ctx["duration"], "detected_moment_at": ctx["moment"], "channel": ctx["channel"],
+        "chat_signals": ctx["signals"], "auto_webcam_detection": {"kind": fc.get("kind"), "cam": fc.get("cam")},
+        "recently_used_caption_styles": ctx["recent_styles"][-4:],
+        "available_sounds": SOUNDS, "available_caption_styles": STYLES,
+    }
+    content: list[dict] = [{"type": "text", "text": "CAMPAIGN\n" + json.dumps(brief, ensure_ascii=False, indent=1)}]
+    for jpg, t in zip(frames, frame_times):
+        content.append({"type": "text", "text": f"Frame at {t:.1f}s:"})
+        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                    "data": base64.standard_b64encode(jpg).decode()}})
+    content.append({"type": "text", "text": "CLIP\n" + json.dumps(info, ensure_ascii=False, indent=1)
+                    + "\n\nTRANSCRIPT (word timings in brackets)\n" + (transcript_text(ctx["words"]) or "(no speech)")})
+    if ctx.get("notes"):
+        content.append({"type": "text", "text": "The human editor reviewed your previous edit and asks for changes. "
+                        "Apply these notes:\n" + ctx["notes"] + "\n\nPrevious plan:\n" + json.dumps(ctx.get("previous_plan") or {})})
+    content.append({"type": "text", "text": "Return the edit plan."})
+    return content
+
+
+def ai_plan(ctx: dict, clip_path, api_key: str, model: str = DEFAULT_MODEL, effort: str = "medium") -> dict:
+    """Ask Claude for the plan. Raises on any failure (the caller falls back to rules)."""
+    import anthropic
+    times = sorted({round(max(0.5, min(ctx["duration"] - 0.5, t)), 1)
+                    for t in (ctx["moment"] - 4, ctx["moment"], ctx["moment"] + 2.5, ctx["moment"] + 6)})
+    frames = frame_jpegs(clip_path, times)
+    client = anthropic.Anthropic(api_key=api_key, max_retries=2, timeout=180)
+    resp = client.beta.messages.create(
+        model=model, max_tokens=8000, system=SYSTEM,
+        betas=["server-side-fallback-2026-07-01"], fallbacks="default",   # re-run on another model if one declines
+        output_config={"effort": effort, "format": {"type": "json_schema", "schema": PLAN_SCHEMA}},
+        messages=[{"role": "user", "content": _user_content(ctx, frames, times)}],
+    )
+    if resp.stop_reason == "refusal":
+        raise RuntimeError("the model declined this clip")
+    if resp.stop_reason == "max_tokens":
+        raise RuntimeError("plan was cut off (max_tokens)")
+    text = next(b.text for b in resp.content if b.type == "text")
+    raw = json.loads(text)
+    raw["_source"] = f"ai:{resp.model}"
+    raw["_usage"] = {"input": resp.usage.input_tokens, "output": resp.usage.output_tokens}
+    return raw
+
+
+# --------------------------------------------------------------------------- rule-based director
+HYPE = re.compile(r"\b(no way|what|wait|oh my god|omg|holy|let'?s go|insane|crazy|bro|dude|why|how|stop|run|"
+                  r"no+|yes+|ha(ha)+|lmao|wtf|nein|was|warum|alter)\b", re.I)
+GENERIC_HOOKS = ["WAIT FOR IT", "CHAT LOST IT", "HE DIDN'T SEE THIS COMING", "THIS WENT WRONG FAST",
+                 "NOBODY EXPECTED THIS", "WATCH TILL THE END", "THE REACTION THOUGH"]
+
+
+def _hook_from_transcript(words: list[Word], moment: float) -> str:
+    """Pick a short, punchy phrase near the moment; else a generic curiosity hook."""
+    text = " ".join(w.text for w in words if moment - 6 <= w.start <= moment + 4)
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        s = re.sub(r"[^\w\s'?!]", "", sentence).strip()
+        n = len(s.split())
+        if 2 <= n <= 7 and (HYPE.search(s) or s.endswith(("?", "!"))):
+            return s.upper()
+    return ""
+
+
+def apply_notes(plan: dict, notes: str, ctx: dict) -> dict:
+    """Rule-based handling of common re-edit requests (the AI director understands anything)."""
+    n = notes.lower()
+    if not n:
+        return plan
+    p = dict(plan)
+    if re.search(r"no (sound|sfx|effects?)|without sound|remove sound", n):
+        p["sfx"] = []
+    if re.search(r"no zoom|without zoom|remove zoom", n):
+        p["zooms"] = []
+    if re.search(r"no hook|without (a )?hook|remove (the )?hook", n):
+        p["hook_text"] = ""
+    for word, layout in (("crop", "face_crop"), ("facecam", "facecam_split"), ("blur", "blur_fit"), ("game only", "game_only")):
+        if word in n:
+            p["layout"] = layout
+    for name in PRESETS:
+        if name.split("_")[0] in n or name.replace("_", " ") in n:
+            p["caption_style"] = name
+    m = re.search(r"start (\d+(?:\.\d+)?)\s*s(?:ec\w*)? later", n)
+    if m:
+        p["keep_start"] = p["keep_start"] + float(m.group(1))
+    m = re.search(r"(?:end|stop) (\d+(?:\.\d+)?)\s*s(?:ec\w*)? (?:earlier|sooner)", n)
+    if m:
+        p["keep_end"] = p["keep_end"] - float(m.group(1))
+    if "shorter" in n:
+        p["keep_end"] = p["keep_start"] + (p["keep_end"] - p["keep_start"]) * 0.75
+    if "longer" in n:
+        p["keep_start"], p["keep_end"] = max(0.0, p["keep_start"] - 4), min(ctx["duration"], p["keep_end"] + 4)
+    m = re.search(r"hook[^\"“]*[\"“]([^\"”]+)[\"”]", notes)
+    if m:
+        p["hook_text"] = m.group(1)
+    elif "hook" in n and not re.search(r"no hook|remove", n):
+        p["hook_text"] = random.choice([h for h in GENERIC_HOOKS if h != plan.get("hook_text")])
+    p["why"] = f"Rule-based re-edit with your notes: {notes.strip()}"
+    return p
+
+
+def rule_plan(ctx: dict, seed: int | None = None) -> dict:
+    rng = random.Random(seed if seed is not None else hash((ctx["channel"], ctx["moment"])))
+    c, words, dur, moment = ctx["campaign"], ctx["words"], ctx["duration"], ctx["moment"]
+    start, end = trim.choose_window(dur, moment, c.get("min_seconds"), c.get("max_seconds"),
+                                    float(c.get("target_seconds") or 32), words)
+    fc = ctx["facecam"]
+    layout = c.get("layout") or {"webcam": "facecam_split", "center_face": "face_crop"}.get(fc.get("kind"), "blur_fit")
+    recent = ctx["recent_styles"][-3:]
+    style = c.get("caption_style") or rng.choice([s for s in STYLES if s not in recent] or STYLES)
+    hook = _hook_from_transcript(words, moment) or rng.choice(GENERIC_HOOKS)
+    hype = (ctx["signals"] or {}).get("z_hype", 3) or 3
+    zooms = [{"at": moment + 0.3, "strength": 0.16 if hype > 5 else 0.12}]
+    sfx = [{"at": start, "sound": "whoosh"}, {"at": moment + 0.25, "sound": rng.choice(["boom", "bass_drop", "pop"])}]
+    emph = [w.text for w in words if moment - 2 <= w.start <= moment + 3 and HYPE.search(w.text)][:2]
+    streamer = ctx["channel"].split(":")[-1]
+    return {
+        "keep_start": start, "keep_end": end, "layout": layout, "game_x": 0.5,
+        "webcam_box": {"present": False, "x": 0, "y": 0, "w": 0, "h": 0},
+        "hook_text": hook if c.get("hook", True) else "", "hook_seconds": 2.5, "caption_style": style,
+        "emphasis_words": emph, "zooms": zooms, "sfx": sfx,
+        "logo_corner": c.get("logo_corner") or ("top_right" if c.get("logo_path") else "none"),
+        "post_title": hook.title()[:80], "post_caption": f"{hook.capitalize()} 😳 (via {streamer})",
+        "hashtags": [], "why": "Rule-based edit (no AI key set): layout from webcam detection, hook from the transcript.",
+        "quality": 5, "skip": False, "skip_reason": "", "_source": "rules",
+    }
+
+
+# --------------------------------------------------------------------------- validation
+def _num(v, default: float) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def validate(raw: dict, ctx: dict) -> dict:
+    """Clamp everything into range, enforce campaign rules, convert to the render plan format."""
+    c, dur = ctx["campaign"], ctx["duration"]
+    lo, hi = float(c.get("min_seconds") or 0), float(c.get("max_seconds") or dur)
+    start = min(max(_num(raw.get("keep_start"), 0), 0), max(dur - 1, 0))
+    end = min(max(_num(raw.get("keep_end"), dur), start + 1), dur)
+    if end - start > hi:
+        end = start + hi
+    if end - start < lo:   # grow toward the end first, then the start
+        end = min(dur, start + lo)
+        start = max(0.0, end - lo)
+
+    fc = dict(ctx["facecam"] or {})
+    box = raw.get("webcam_box") or {}
+    if box.get("present") and not fc.get("cam") and 0.03 < _num(box.get("w"), 0) < 0.6 and 0.03 < _num(box.get("h"), 0) < 0.7:
+        x, y, w, h = (min(max(_num(box.get(k), 0), 0), 1) for k in "xywh")
+        fc = {"kind": "webcam", "cam": [x, y, min(w, 1 - x), min(h, 1 - y)], "source": "ai"}
+    layout = c.get("layout") or raw.get("layout")
+    if layout not in LAYOUTS:
+        layout = "blur_fit"
+    if layout == "facecam_split" and not fc.get("cam"):
+        layout = "face_crop" if fc.get("kind") == "center_face" else "blur_fit"
+
+    def inside(t: float) -> bool:
+        return start + 0.2 <= t <= end - 0.3
+
+    zooms = [{"at": round(_num(z.get("at"), -1), 2), "strength": round(min(max(_num(z.get("strength"), 0.14), 0.06), 0.25), 3)}
+             for z in raw.get("zooms") or [] if inside(_num(z.get("at"), -1))][:3]
+    sfx = [{"at": round(_num(s.get("at"), -1), 2), "sound": s.get("sound")}
+           for s in raw.get("sfx") or [] if s.get("sound") in SFX and start <= _num(s.get("at"), -1) <= end - 0.2][:4]
+
+    hook_text = re.sub(r"\s+", " ", str(raw.get("hook_text") or "")).strip()[:48] if c.get("hook", True) else ""
+    style = c.get("caption_style") or raw.get("caption_style")
+    if style not in PRESETS:
+        style = STYLES[0]
+    corner = raw.get("logo_corner")
+    logo = None
+    if c.get("logo_path"):
+        corner = c.get("logo_corner") or (corner if corner in CORNERS and corner != "none" else "top_right")
+        logo = {"corner": corner, "scale": float(c.get("logo_scale") or 0.16)}
+
+    tags = [t if t.startswith(("#", "@")) else f"#{t}" for t in (raw.get("hashtags") or []) if t.strip()]
+    for req in c.get("required_text") or []:     # campaign requirements always make it in
+        if req not in tags and req not in (raw.get("post_caption") or ""):
+            tags.append(req)
+    q = int(min(max(_num(raw.get("quality"), 5), 1), 10))
+    return {
+        "keep": [round(start, 2), round(end, 2)], "layout": layout, "game_x": min(max(_num(raw.get("game_x"), 0.5), 0), 1),
+        "facecam": fc, "hook": {"text": hook_text, "seconds": min(max(_num(raw.get("hook_seconds"), 2.5), 1.0), 4.0),
+                                "box_color": c.get("brand_color") or "#E8202A"} if hook_text else None,
+        "caption_style": style, "emphasis_words": [str(w) for w in raw.get("emphasis_words") or []][:4],
+        "zooms": zooms, "sfx": sfx, "logo": logo,
+        "post": {"title": str(raw.get("post_title") or hook_text.title())[:100],
+                 "caption": str(raw.get("post_caption") or ""), "hashtags": tags},
+        "why": str(raw.get("why") or ""), "quality": q,
+        "skip": bool(raw.get("skip")), "skip_reason": str(raw.get("skip_reason") or ""),
+        "source": raw.get("_source", "ai"), "usage": raw.get("_usage"),
+    }
+
+
+def plan(ctx: dict, clip_path, settings: dict) -> dict:
+    """AI plan when a key is set, rules otherwise or on failure. Always validated."""
+    key = (settings or {}).get("anthropic_api_key") or ""
+    raw, note = None, ""
+    if key and (settings or {}).get("director", "ai") == "ai":
+        try:
+            raw = ai_plan(ctx, clip_path, key, settings.get("model") or DEFAULT_MODEL, settings.get("effort") or "medium")
+        except Exception as e:
+            note = f"AI director unavailable ({type(e).__name__}: {str(e)[:160]}); used rules."
+            log.warning(note)
+    if raw is None:
+        prev = ctx.get("previous_plan")
+        if ctx.get("notes") and prev:      # re-edit: start from the last plan, apply the notes
+            base = {"keep_start": prev["keep"][0], "keep_end": prev["keep"][1], "layout": prev["layout"],
+                    "game_x": prev.get("game_x", 0.5), "hook_text": (prev.get("hook") or {}).get("text", ""),
+                    "hook_seconds": (prev.get("hook") or {}).get("seconds", 2.5), "caption_style": prev["caption_style"],
+                    "emphasis_words": prev.get("emphasis_words", []), "zooms": prev.get("zooms", []), "sfx": prev.get("sfx", []),
+                    "logo_corner": (prev.get("logo") or {}).get("corner", "none"), "post_title": prev["post"].get("title"),
+                    "post_caption": prev["post"].get("caption"), "hashtags": prev["post"].get("hashtags", []),
+                    "quality": prev.get("quality", 5), "skip": False, "skip_reason": "", "_source": "rules",
+                    "webcam_box": {"present": False, "x": 0, "y": 0, "w": 0, "h": 0}}
+            raw = apply_notes(base, ctx["notes"], ctx)
+        else:
+            raw = rule_plan(ctx)
+    p = validate(raw, ctx)
+    if note:
+        p["why"] = (note + " " + p["why"]).strip()
+    return p

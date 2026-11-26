@@ -70,21 +70,14 @@ git clone -b ccr-8c9d8d98-0303s9 https://github.com/saad-designs/Clipping.git &&
    ```
    Use the arrow keys to go to `client_id: ""` and paste the ID between the quotes, then the same for `client_secret`. Save with **Ctrl+O** then **Enter**, and exit with **Ctrl+X**.
 
-### A6. Your campaign (5 min)
-```bash
-sudo nano /opt/clipping/campaigns.yaml
-```
-Change the example to your Content Rewards campaign:
-- `name:` the campaign name (no spaces is easiest, e.g. `energy-drink`).
-- Under `channels:`, keep one line per streamer, e.g. `platform: twitch` + `login: kaicenat`. Delete the Kick/YouTube example lines if you don't need them.
-- `min_seconds` / `max_seconds` / `required_text`: copy these from the campaign's rules.
+### A6. Campaigns: set them up from your PC
+You don't edit campaign files on the server. You add campaigns in the Studio dashboard on your PC (part C), press **Send channels to server**, and the server restarts itself to watch the new streamers.
 
-Save (**Ctrl+O**, **Enter**, **Ctrl+X**), then restart and watch:
+To check the server is running:
 ```bash
-sudo systemctl restart clipping-watcher
 journalctl -u clipping-watcher -f
 ```
-✅ Within a minute you'll see `joined N twitch chats`. Live streamers show `LIVE: twitch:<name>` and `recording`. Press **Ctrl+C** to stop watching the log; the server keeps running.
+Press **Ctrl+C** to stop watching the log; the server keeps running.
 
 ---
 
@@ -112,28 +105,34 @@ Lost the token? In the server window: `sudo cat /opt/clipping/data/api_token.txt
 ---
 
 ## C. Studio on your Windows PC (15 min)
-1. Get the code: on github.com open **saad-designs/Clipping** → the branch button (top left of the file list) → pick **ccr-8c9d8d98-0303s9** → green **Code** button → **Download ZIP**. Unzip it somewhere simple, e.g. `C:\Clipping`.
-2. Open the `windows` folder and double-click **`setup.bat`**.
-   - If Windows says "Windows protected your PC" → **More info** → **Run anyway**.
+Studio is where clips get edited and where you approve them. It runs on your PC and opens in your browser.
+
+1. **Get the code:** on github.com open **saad-designs/Clipping** → the branch button (top left of the file list) → pick **ccr-8c9d8d98-0303s9** → green **Code** button → **Download ZIP**. Unzip it somewhere simple, e.g. `C:\Clipping`.
+2. **Install:** open the `windows` folder and double-click **`setup.bat`**.
+   - "Windows protected your PC" → **More info** → **Run anyway**.
    - If it says Python was just installed, close the window and double-click `setup.bat` again.
-   - At the end, Notepad opens `studio.yaml`. Fill in:
-     ```
-     server_url: "http://100.101.102.103:8787"     ← your server's Tailscale address
-     token: "YOUR-TOKEN"
-     ```
-     Save and close.
-3. Double-click **`Check setup.bat`**. ✅ Every line says ok and `server: ok, 1 campaigns: …`.
-4. Double-click **`Start Studio.bat`** and leave that window open.
-5. On the dashboard, approve a clip (press **A**). Within ~3 minutes the finished vertical clip with captions appears in `C:\Clipping\Campaigns\<campaign>\ready\`, along with a `.caption.txt` to paste when you upload. The first clip takes longer because the caption model downloads once (~500 MB).
-
-**VOD clips:** double-click **`Make VOD clips.bat`**, paste a VOD or YouTube link, and type the campaign name.
-
----
+3. **Start:** double-click **`Start Studio.bat`**. Your browser opens **Clipping Studio** (http://localhost:8790). Keep the black window open while you work.
+4. **Settings** (left menu):
+   - **Server address:** `http://100.101.102.103:8787` (your server's Tailscale address) and the **token**.
+   - **Anthropic API key:** this turns on the **AI director**. Claude looks at each clip, reads your brief, and decides the edit, hook and caption (roughly 3–6 US cents per clip). Get a key at console.anthropic.com → API Keys. Without a key, a simpler rule-based editor is used.
+   - Save.
+5. **Campaigns → + New campaign:**
+   - Name, the Content Rewards link, and **paste the whole campaign brief**.
+   - Add the streamers (platform + channel name).
+   - Set the length rules and required hashtags from the brief.
+   - **Save**, then upload the logo, intro/outro or font if the campaign gives you one.
+   - Press **Send channels to server**.
+6. **Webcam position** (optional): Studio finds the streamer's webcam automatically. If it gets one wrong, open the campaign → **Draw box** next to that streamer → drag a rectangle around the webcam once. Every clip from that streamer uses it.
 
 ## Everyday use
-1. Check the dashboard on your phone a few times a day → **A** approve / **R** reject.
-2. Keep **Start Studio** running on the PC → upload from `Campaigns\<campaign>\ready\`.
-3. After uploading, move the clip into `posted\` so you know it's done.
+1. The server catches hype moments. Studio downloads each one and edits it: facecam on top, game below, big captions, a hook title, zoom and sound on the moment, your logo.
+2. Open **Review**. Watch each clip.
+   - **A:** approve.
+   - **R:** reject.
+   - Change the hook or caption text and press **Save changes & re-render**.
+   - Or type what you want different ("funnier hook, start 2 seconds later, no sound effects") and press **Re-edit**.
+3. **Ready to upload:** upload the clip, press **Copy caption** and paste it into TikTok/Shorts/Reels, then **Mark posted**.
+4. **Queue → Add a video:** paste a VOD link or upload a file to clip it by hand.
 
 ## Updating later (when Claude changes the code)
 - **Server:** connect (A2), then `cd ~/Clipping && git pull && sudo bash deploy/oracle-setup.sh`
