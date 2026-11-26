@@ -5,8 +5,9 @@ the streamer's webcam is, and looks at frames from the clip. It returns an edit 
 what to keep, layout, hook title, caption style, words to emphasise, zoom punch-ins,
 sound hits, logo, and the post title/caption/hashtags.
 
-With an Anthropic API key, Claude makes these decisions. Without one (or if the call
-fails), a rule-based director makes a sensible, varied plan so editing never stops.
+By default the free built-in director (studio/free_director.py) decides: no AI, no cost.
+Switch Settings -> Director to "Claude (paid)" with an Anthropic API key to have Claude plan
+each edit instead; if that call fails, the free director takes over so editing never stops.
 `validate()` runs on every plan either way and enforces the campaign's hard rules.
 """
 from __future__ import annotations
@@ -18,7 +19,6 @@ import random
 import re
 import subprocess
 
-from studio.editor import trim
 from studio.editor.captions import PRESETS
 from studio.editor.render import SFX
 from studio.editor.transcribe import Word
@@ -111,14 +111,16 @@ def transcript_text(words: list[Word]) -> str:
 
 
 def build_context(clip: dict, campaign: dict, words: list[Word], facecam: dict | None, duration: float,
-                  recent_styles: list[str] | None = None, notes: str = "", previous_plan: dict | None = None) -> dict:
+                  recent_styles: list[str] | None = None, notes: str = "", previous_plan: dict | None = None,
+                  loudness: list | None = None, language: str | None = None, recent_hooks: list[str] | None = None) -> dict:
     m = clip.get("moment_offset")
     moment = float(m) if m is not None else duration / 2
     return {
         "duration": round(duration, 2), "moment": round(moment, 2), "channel": clip.get("channel", ""),
         "signals": clip.get("signals") or {}, "words": words, "facecam": facecam or {"kind": "none"},
         "recent_styles": recent_styles or [], "notes": notes, "previous_plan": previous_plan,
-        "campaign": campaign,
+        "campaign": campaign, "loudness": loudness or [], "language": language, "recent_hooks": recent_hooks or [],
+        "viewer_clips": clip.get("viewer_clips", 0),
     }
 
 
@@ -179,21 +181,8 @@ def ai_plan(ctx: dict, clip_path, api_key: str, model: str = DEFAULT_MODEL, effo
 
 
 # --------------------------------------------------------------------------- rule-based director
-HYPE = re.compile(r"\b(no way|what|wait|oh my god|omg|holy|let'?s go|insane|crazy|bro|dude|why|how|stop|run|"
-                  r"no+|yes+|ha(ha)+|lmao|wtf|nein|was|warum|alter)\b", re.I)
 GENERIC_HOOKS = ["WAIT FOR IT", "CHAT LOST IT", "HE DIDN'T SEE THIS COMING", "THIS WENT WRONG FAST",
                  "NOBODY EXPECTED THIS", "WATCH TILL THE END", "THE REACTION THOUGH"]
-
-
-def _hook_from_transcript(words: list[Word], moment: float) -> str:
-    """Pick a short, punchy phrase near the moment; else a generic curiosity hook."""
-    text = " ".join(w.text for w in words if moment - 6 <= w.start <= moment + 4)
-    for sentence in re.split(r"(?<=[.!?])\s+", text):
-        s = re.sub(r"[^\w\s'?!]", "", sentence).strip()
-        n = len(s.split())
-        if 2 <= n <= 7 and (HYPE.search(s) or s.endswith(("?", "!"))):
-            return s.upper()
-    return ""
 
 
 def apply_notes(plan: dict, notes: str, ctx: dict) -> dict:
@@ -229,35 +218,14 @@ def apply_notes(plan: dict, notes: str, ctx: dict) -> dict:
         p["hook_text"] = m.group(1)
     elif "hook" in n and not re.search(r"no hook|remove", n):
         p["hook_text"] = random.choice([h for h in GENERIC_HOOKS if h != plan.get("hook_text")])
-    p["why"] = f"Rule-based re-edit with your notes: {notes.strip()}"
+    p["why"] = f"Re-edited with your notes: {notes.strip()}"
     return p
 
 
 def rule_plan(ctx: dict, seed: int | None = None) -> dict:
-    rng = random.Random(seed if seed is not None else hash((ctx["channel"], ctx["moment"])))
-    c, words, dur, moment = ctx["campaign"], ctx["words"], ctx["duration"], ctx["moment"]
-    start, end = trim.choose_window(dur, moment, c.get("min_seconds"), c.get("max_seconds"),
-                                    float(c.get("target_seconds") or 32), words)
-    fc = ctx["facecam"]
-    layout = c.get("layout") or {"webcam": "facecam_split", "center_face": "face_crop"}.get(fc.get("kind"), "blur_fit")
-    recent = ctx["recent_styles"][-3:]
-    style = c.get("caption_style") or rng.choice([s for s in STYLES if s not in recent] or STYLES)
-    hook = _hook_from_transcript(words, moment) or rng.choice(GENERIC_HOOKS)
-    hype = (ctx["signals"] or {}).get("z_hype", 3) or 3
-    zooms = [{"at": moment + 0.3, "strength": 0.16 if hype > 5 else 0.12}]
-    sfx = [{"at": start, "sound": "whoosh"}, {"at": moment + 0.25, "sound": rng.choice(["boom", "bass_drop", "pop"])}]
-    emph = [w.text for w in words if moment - 2 <= w.start <= moment + 3 and HYPE.search(w.text)][:2]
-    streamer = ctx["channel"].split(":")[-1]
-    return {
-        "keep_start": start, "keep_end": end, "layout": layout, "game_x": 0.5,
-        "webcam_box": {"present": False, "x": 0, "y": 0, "w": 0, "h": 0},
-        "hook_text": hook if c.get("hook", True) else "", "hook_seconds": 2.5, "caption_style": style,
-        "emphasis_words": emph, "zooms": zooms, "sfx": sfx,
-        "logo_corner": c.get("logo_corner") or ("top_right" if c.get("logo_path") else "none"),
-        "post_title": hook.title()[:80], "post_caption": f"{hook.capitalize()} 😳 (via {streamer})",
-        "hashtags": [], "why": "Rule-based edit (no AI key set): layout from webcam detection, hook from the transcript.",
-        "quality": 5, "skip": False, "skip_reason": "", "_source": "rules",
-    }
+    """The free built-in director (studio/free_director.py)."""
+    from studio import free_director
+    return free_director.rule_plan(ctx, seed)
 
 
 # --------------------------------------------------------------------------- validation
@@ -324,7 +292,7 @@ def validate(raw: dict, ctx: dict) -> dict:
                  "caption": str(raw.get("post_caption") or ""), "hashtags": tags},
         "why": str(raw.get("why") or ""), "quality": q,
         "skip": bool(raw.get("skip")), "skip_reason": str(raw.get("skip_reason") or ""),
-        "source": raw.get("_source", "ai"), "usage": raw.get("_usage"),
+        "source": raw.get("_source", "ai"), "usage": raw.get("_usage"), "kind": raw.get("_kind"),
     }
 
 
@@ -332,11 +300,11 @@ def plan(ctx: dict, clip_path, settings: dict) -> dict:
     """AI plan when a key is set, rules otherwise or on failure. Always validated."""
     key = (settings or {}).get("anthropic_api_key") or ""
     raw, note = None, ""
-    if key and (settings or {}).get("director", "ai") == "ai":
+    if key and (settings or {}).get("director", "free") == "ai":
         try:
             raw = ai_plan(ctx, clip_path, key, settings.get("model") or DEFAULT_MODEL, settings.get("effort") or "medium")
         except Exception as e:
-            note = f"AI director unavailable ({type(e).__name__}: {str(e)[:160]}); used rules."
+            note = f"AI director unavailable ({type(e).__name__}: {str(e)[:160]}); used the free director."
             log.warning(note)
     if raw is None:
         prev = ctx.get("previous_plan")
@@ -347,7 +315,7 @@ def plan(ctx: dict, clip_path, settings: dict) -> dict:
                     "emphasis_words": prev.get("emphasis_words", []), "zooms": prev.get("zooms", []), "sfx": prev.get("sfx", []),
                     "logo_corner": (prev.get("logo") or {}).get("corner", "none"), "post_title": prev["post"].get("title"),
                     "post_caption": prev["post"].get("caption"), "hashtags": prev["post"].get("hashtags", []),
-                    "quality": prev.get("quality", 5), "skip": False, "skip_reason": "", "_source": "rules",
+                    "quality": prev.get("quality", 5), "skip": False, "skip_reason": "", "_source": "free",
                     "webcam_box": {"present": False, "x": 0, "y": 0, "w": 0, "h": 0}}
             raw = apply_notes(base, ctx["notes"], ctx)
         else:

@@ -114,7 +114,7 @@ Studio is where clips get edited and where you approve them. It runs on your PC 
 3. **Start:** double-click **`Start Studio.bat`**. Your browser opens **Clipping Studio** (http://localhost:8790). Keep the black window open while you work.
 4. **Settings** (left menu):
    - **Server address:** `http://100.101.102.103:8787` (your server's Tailscale address) and the **token**.
-   - **Anthropic API key:** this turns on the **AI director**. Claude looks at each clip, reads your brief, and decides the edit, hook and caption (roughly 3–6 US cents per clip). Get a key at console.anthropic.com → API Keys. Without a key, a simpler rule-based editor is used.
+   - **Director:** leave it on **Free (built-in)**. It costs nothing. When the clips start earning, you can switch to **Claude (paid)** here with an Anthropic API key: Haiku 5.5 is about 0.2 US cents per clip, Opus 5.5 (best) about 3–6 cents.
    - Save.
 5. **Campaigns → + New campaign:**
    - Name, the Content Rewards link, and **paste the whole campaign brief**.

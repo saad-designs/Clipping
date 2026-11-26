@@ -77,6 +77,7 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
         return {"counts": store.counts(), "worker": worker.status, "current": worker.current,
                 "last_sync": worker.last_sync, "jobs": len(worker.jobs),
                 "ai": bool(store.settings().get("anthropic_api_key")) and store.settings().get("director") == "ai",
+                "director": store.settings().get("director", "free"),
                 "output_dir": str(store.output_dir())}
 
     @app.get("/api/settings")

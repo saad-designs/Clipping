@@ -45,17 +45,23 @@ def load_audio(path) -> "np.ndarray":
     return np.frombuffer(raw, dtype=np.float32)
 
 
-def transcribe(path, model: str = "small", language: str | None = None) -> list[Word]:
+def transcribe_full(path, model: str = "small", language: str | None = None) -> tuple[list[Word], str | None]:
+    """Words plus the spoken language whisper detected (e.g. "en", "de")."""
     if not available():
         log.warning("faster-whisper not installed: no captions (pip install faster-whisper)")
-        return []
+        return [], language
     try:
         audio = load_audio(path)
         if audio.size == 0:
-            return []
-        segments, _info = _model(model).transcribe(audio, language=language, word_timestamps=True,
-                                                   vad_filter=True, beam_size=5)
-        return [Word(w.start, w.end, w.word.strip()) for s in segments for w in (s.words or []) if w.word.strip()]
+            return [], language
+        segments, info = _model(model).transcribe(audio, language=language, word_timestamps=True,
+                                                  vad_filter=True, beam_size=5)
+        words = [Word(float(w.start), float(w.end), w.word.strip()) for s in segments for w in (s.words or []) if w.word.strip()]
+        return words, getattr(info, "language", None) or language
     except Exception as e:   # a missing model download, a corrupt file: still make the clip
         log.warning("transcription failed (%s): clip will have no captions", e)
-        return []
+        return [], language
+
+
+def transcribe(path, model: str = "small", language: str | None = None) -> list[Word]:
+    return transcribe_full(path, model, language)[0]

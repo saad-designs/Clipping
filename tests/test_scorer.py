@@ -39,6 +39,11 @@ class ScorerTests(unittest.TestCase):
     def test_two_separate_spikes(self):
         self.assertEqual(len(simulate({400: 15, 700: 15})), 2)
 
+    def test_moment_records_what_chat_spammed(self):
+        ms = simulate({600: 15})
+        top = dict(ms[0].signals["top_chat"])
+        self.assertIn("KEKW LMAO", top)
+
     def test_hourly_cap_keeps_only_stronger_moments(self):
         cfg = ScorerConfig(max_moments_per_hour=2)
         sc = ChannelScorer("twitch:test", cfg)

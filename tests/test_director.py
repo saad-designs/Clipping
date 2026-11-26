@@ -62,14 +62,14 @@ class ValidateTests(unittest.TestCase):
 
 
 class RulesTests(unittest.TestCase):
-    def test_rule_plan_is_valid_and_varies_styles(self):
+    def test_rule_plan_is_valid_and_consecutive_styles_differ(self):
         styles = []
-        for i in range(4):
-            p = director.validate(director.rule_plan(ctx(recent=styles[-3:]), seed=i), ctx())
+        for i in range(6):
+            p = director.validate(director.rule_plan(ctx(recent=styles[-2:]), seed=i), ctx())
             styles.append(p["caption_style"])
             self.assertTrue(p["hook"]["text"])
             self.assertIn("#ad", p["post"]["hashtags"])
-        self.assertEqual(len(set(styles)), 4)       # never repeats a recently used style
+        self.assertTrue(all(a != b for a, b in zip(styles, styles[1:])), styles)
 
     def test_layout_follows_webcam_detection(self):
         p = director.validate(director.rule_plan(ctx(facecam={"kind": "webcam", "cam": [0, 0.6, 0.25, 0.3]})),
@@ -113,7 +113,7 @@ class AITests(unittest.TestCase):
             with mock.patch("anthropic.Anthropic", return_value=client), \
                     mock.patch.object(director, "frame_jpegs", return_value=[]):
                 p = director.plan(ctx(), "clip.mp4", {"anthropic_api_key": "sk-test", "director": "ai"})
-            self.assertEqual(p["source"], "rules")
+            self.assertEqual(p["source"], "free")
             self.assertIn("AI director unavailable", p["why"])
 
     def test_schema_lists_every_required_field(self):
@@ -123,3 +123,49 @@ class AITests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FreeDirectorTests(unittest.TestCase):
+    def test_classify_from_chat_and_speech(self):
+        from studio import free_director as fd
+        self.assertEqual(fd.classify([["KEKW", 30], ["W", 4]], [], 10)[0], "funny")
+        self.assertEqual(fd.classify([["NO WAY", 20], ["?????", 9]], [], 10)[0], "shock")
+        self.assertEqual(fd.classify([["L", 25], ["RIP", 10]], [], 10)[0], "fail")
+        said = [Word(9, 9.4, "oh"), Word(9.4, 9.8, "no"), Word(9.8, 10.2, "I'm"), Word(10.2, 10.6, "dead")]
+        self.assertEqual(fd.classify([], said, 10)[0], "fail")
+        self.assertEqual(fd.classify([], [], 10)[0], "shock")      # no evidence: neutral hooks
+
+    def test_payoff_on_loud_stretch_picks_second_nearest_chat(self):
+        from studio import free_director as fd
+        loud = [(t, -30.0) for t in range(0, 8)] + [(t, -14.0) for t in range(8, 16)] + [(t, -32.0) for t in range(16, 25)]
+        p = fd.payoff(loud, 15.0, 25)
+        self.assertAlmostEqual(p["at"], 15.3)
+        self.assertEqual(p["calm_at"], 16)
+        self.assertGreater(p["strength_db"], 10)
+        self.assertEqual(fd.payoff([], 12.0, 30)["at"], 12.0)
+
+    def test_hooks_in_clip_language_and_no_repeats(self):
+        from studio import free_director as fd
+        c = ctx(); c["language"] = "de"; c["signals"] = {"top_chat": [["L", 20]]}
+        hook = director.rule_plan(c, seed=1)["hook_text"]
+        self.assertIn(hook, fd.TEMPLATES["de"]["fail"] + ['CHAT SPAMMT "L"'] + [h for h in fd.hook_candidates("fail", WORDS, [["L", 20]], 20, "de")])
+        c["recent_hooks"] = [hook]
+        self.assertNotEqual(director.rule_plan(c, seed=1)["hook_text"], hook)
+
+    def test_chat_hook_used_when_chat_spams(self):
+        from studio import free_director as fd
+        hooks = fd.hook_candidates("shock", [], [["NO WAY", 40]], 10, "en")
+        self.assertEqual(hooks[0], 'CHAT SPAMMED "NO WAY"')
+
+    def test_quality_range(self):
+        from studio import free_director as fd
+        self.assertLessEqual(fd.quality({"z_hype": 30}, 20, True, 3), 10)
+        self.assertGreaterEqual(fd.quality({}, 0, False), 1)
+        self.assertGreater(fd.quality({"z_hype": 9}, 9, True), fd.quality({"z_hype": 2}, 0, False))
+
+    def test_free_is_the_default(self):
+        from studio.store import SETTING_DEFAULTS
+        self.assertEqual(SETTING_DEFAULTS["director"], "free")
+        with mock.patch.object(director, "ai_plan") as ai:
+            director.plan(ctx(), "x.mp4", {"anthropic_api_key": "sk-x"})     # key alone doesn't switch to paid
+            ai.assert_not_called()

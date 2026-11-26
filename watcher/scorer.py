@@ -13,6 +13,8 @@ When the stream is being recorded, audio loudness is added as a 4th signal (a bo
 from __future__ import annotations
 
 import math
+import re
+from collections import Counter
 import statistics
 from collections import deque
 from dataclasses import dataclass, field
@@ -29,23 +31,36 @@ class Moment:
     signals: dict        # raw counts + z-scores, kept so thresholds can be tuned later
 
 
+def phrase(text: str) -> str:
+    """Normalise a chat message for counting: 'KEKW KEKW kekw' -> 'KEKW', 'no way!!' -> 'NO WAY'."""
+    t = re.sub(r"\s+", " ", re.sub(r"[!.,]+", " ", text.upper())).strip()
+    words = t.split(" ")
+    if words and all(w == words[0] for w in words):
+        t = words[0]
+    return t if 0 < len(t) <= 24 else ""
+
+
 @dataclass
 class _Bucket:
     start: float
     messages: int = 0
     hype: int = 0
     users: dict = field(default_factory=dict)   # user -> messages sent this bucket
+    phrases: Counter = field(default_factory=Counter)   # what chat is spamming ("KEKW", "NO WAY")
 
     def values(self) -> dict[str, float]:
         return {"messages": self.messages, "hype": self.hype, "unique": len(self.users)}
 
-    def add(self, user: str, hype: bool, per_user_cap: int) -> None:
+    def add(self, user: str, hype: bool, per_user_cap: int, text: str = "") -> None:
         n = self.users.get(user, 0)
         self.users[user] = n + 1
         if n >= per_user_cap:   # one spammer can't fake a surge
             return
         self.messages += 1
         self.hype += hype
+        p = phrase(text)
+        if p:
+            self.phrases[p] += 1
 
 
 def _z(value: float, history: list[float], floor: float) -> float:
@@ -91,7 +106,7 @@ class ChannelScorer:
         if start < self.next_close:   # late message for an already-scored bucket
             return fired
         bucket = self.open.setdefault(start, _Bucket(start))
-        bucket.add(user, is_hype(text, self.extra), self.cfg.per_user_cap)
+        bucket.add(user, is_hype(text, self.extra), self.cfg.per_user_cap, text)
         return fired
 
     def add_audio(self, ts: float, lufs: float) -> None:
@@ -157,6 +172,7 @@ class ChannelScorer:
                 sig = {**vals, **{f"z_{k}": round(z, 2) for k, z in zs.items()}}
                 if peak is not None:
                     sig["audio_lufs"] = round(peak, 1)
+                sig["top_chat"] = [[p, n] for p, n in bucket.phrases.most_common(5) if n >= 2]
                 moment = Moment(self.channel, at, round(score, 2), sig)
         self.history.append(vals)
         if peak is not None:

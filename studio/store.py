@@ -11,7 +11,7 @@ from pathlib import Path
 
 SETTING_DEFAULTS = {
     "server_url": "", "token": "", "anthropic_api_key": "", "model": "claude-opus-5-5", "effort": "medium",
-    "director": "ai", "encoder": "auto", "whisper_model": "small", "language": None, "poll_minutes": 3,
+    "director": "free", "encoder": "auto", "whisper_model": "small", "language": None, "poll_minutes": 3,
     "output_dir": "Campaigns",
 }
 
@@ -193,6 +193,12 @@ class Store:
             rows = self.db.execute("SELECT plan FROM clips WHERE campaign=? AND plan IS NOT NULL "
                                    "ORDER BY updated DESC LIMIT ?", (campaign, n)).fetchall()
         return [json.loads(r["plan"]).get("caption_style") for r in rows][::-1]
+
+    def recent_hooks(self, campaign: str, n: int = 6) -> list[str]:
+        with self.lock:
+            rows = self.db.execute("SELECT plan FROM clips WHERE campaign=? AND plan IS NOT NULL "
+                                   "ORDER BY updated DESC LIMIT ?", (campaign, n)).fetchall()
+        return [((json.loads(r["plan"]).get("hook") or {}).get("text") or "") for r in rows]
 
     def counts(self) -> dict:
         with self.lock:

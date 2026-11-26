@@ -3,7 +3,7 @@
 A two-part system for Content Rewards clipping campaigns:
 
 - **Watcher** runs 24/7 on an Oracle Cloud VM. It watches Twitch, Kick and YouTube Live streams, detects hype moments from chat and audio, keeps a rolling recording, and cuts a clip of every moment. Its own dashboard shows what it is watching and recording.
-- **Studio** runs on your PC as a dashboard in the browser (http://localhost:8790). You set up each campaign there: brief, streamers, logo, rules. It pulls every captured moment, and an **AI director** (Claude) plans each edit: facecam on top / game below, big animated captions, a hook title, zoom and sound hits on the moment, logo, and the post caption, with a different style per clip. You approve the final edit in **Review**, then upload from **Ready to upload**. It can also pick the best moments out of a VOD or any long video.
+- **Studio** runs on your PC as a dashboard in the browser (http://localhost:8790). You set up each campaign there: brief, streamers, logo, rules. It pulls every captured moment, and a **director** plans each edit. The free built-in one works out what kind of moment it is from chat, speech and audio; Claude (paid) can take over later from Settings. It decides: facecam on top / game below, big animated captions, a hook title, zoom and sound hits on the moment, logo, and the post caption, with a different style per clip. You approve the final edit in **Review**, then upload from **Ready to upload**. It can also pick the best moments out of a VOD or any long video.
 
 ```
 Stream ──► Watcher (Oracle) ──► captured clip ──► Studio (PC): director plans ──► render ──► Review

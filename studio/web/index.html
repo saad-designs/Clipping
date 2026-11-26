@@ -172,7 +172,7 @@ async function refreshState() {
     const sync = s.last_sync?.error ? `<span class="dot err"></span>Server: ${esc(s.last_sync.error).slice(0, 90)}`
       : s.last_sync?.at ? `<span class="dot ok"></span>Server checked ${ago(s.last_sync.at)}` : `<span class="dot"></span>No server set`;
     $("#status").innerHTML = `<div><span class="dot ${busy ? "busy" : "ok"}"></span><b>${busy ? esc(s.worker) : "Idle"}</b></div>
-      <div style="margin-top:6px">${sync}</div><div style="margin-top:6px">Director: <b>${s.ai ? "AI" : "rules (add an API key)"}</b></div>`;
+      <div style="margin-top:6px">${sync}</div><div style="margin-top:6px">Director: <b>${s.ai ? "Claude" : "Free (built-in)"}</b></div>`;
     cache.state = s;
   } catch { $("#status").innerHTML = `<span class="dot err"></span>Studio isn't responding`; }
 }
@@ -193,7 +193,7 @@ function reviewCard(c, i) {
     <div class="phone"><video src="/api/clips/${c.id}/video?v=${Math.round(c.updated)}" controls playsinline preload="metadata"></video></div>
     <div class="side">
       <div class="head"><span class="chan">${esc(c.channel || c.source)}</span><span class="pill">${esc(c.campaign)}</span>${qualityPill(p.quality)}
-        <span class="pill ${p.source?.startsWith("ai") ? "info" : ""}">${p.source?.startsWith("ai") ? "AI director" : "Rule-based edit"}</span>
+        <span class="pill ${p.source?.startsWith("ai") ? "info" : ""}">${p.source?.startsWith("ai") ? "Claude director" : "Free director"}</span>${p.kind ? `<span class="pill">${esc(p.kind)}</span>` : ""}
         ${m.viewer_clips ? `<span class="pill good">🎬 viewers clipped this</span>` : ""}<span class="pill">${ago(c.created)}</span></div>
       ${p.why ? `<div class="why"><b>Director:</b> ${esc(p.why)}</div>` : ""}
       ${p.skip ? `<div class="skip"><b>Director suggests skipping:</b> ${esc(p.skip_reason)}</div>` : ""}
@@ -416,11 +416,11 @@ async function renderPrefs() {
     <div class="row"><label style="flex:2 1 260px">Server address <input name="server_url" value="${esc(s.server_url)}" placeholder="http://100.x.y.z:8787"></label>
       <label>Token <input name="token" value="${esc(s.token)}" placeholder="from the server"></label></div>
     <label>Check for new captures every (minutes) <input type="number" name="poll_minutes" value="${esc(s.poll_minutes)}" min="1"></label>
-    <h2>AI director</h2>
-    <p class="sub" style="margin:0">With an Anthropic API key, Claude watches frames from each clip, reads the transcript and your brief, and plans the edit and writes the hook and caption (roughly 3–6 US cents per clip). Without a key, a simpler rule-based editor is used.</p>
-    <div class="row"><label style="flex:2 1 260px">Anthropic API key <input name="anthropic_api_key" value="${esc(s.anthropic_api_key)}" placeholder="sk-ant-…" autocomplete="off"></label>
-      <label>Director <select name="director"><option value="ai" ${s.director === "ai" ? "selected" : ""}>AI (needs key)</option><option value="rules" ${s.director === "rules" ? "selected" : ""}>Rule-based</option></select></label></div>
-    <div class="row"><label>Model <input name="model" value="${esc(s.model)}"></label>
+    <h2>Director</h2>
+    <p class="sub" style="margin:0">The director decides how each clip is edited. <b>Free (built-in)</b> costs nothing: it reads what chat spammed, what was said and where the audio peaks. <b>Claude</b> also watches frames from the clip and writes the hook and caption like a human editor. It's paid per clip; switch when the clips start earning.</p>
+    <div class="row"><label>Director <select name="director" id="dir-mode"><option value="free" ${s.director !== "ai" ? "selected" : ""}>Free (built-in)</option><option value="ai" ${s.director === "ai" ? "selected" : ""}>Claude (paid, needs API key)</option></select></label>
+      <label>Claude model <select name="model">${[["claude-haiku-5-5", "Haiku 5.5 · cheapest, ~0.2¢ per clip"], ["claude-sonnet-5-5", "Sonnet 5.5 · ~1–2¢ per clip"], ["claude-opus-5-5", "Opus 5.5 · best, ~3–6¢ per clip"]].map(([k, l]) => `<option value="${k}" ${k === s.model ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+    <div class="row" id="ai-fields" ${s.director === "ai" ? "" : "hidden"}><label style="flex:2 1 260px">Anthropic API key <input name="anthropic_api_key" value="${esc(s.anthropic_api_key)}" placeholder="sk-ant-… (console.anthropic.com → API Keys)" autocomplete="off"></label>
       <label>Effort <select name="effort">${["low", "medium", "high"].map((e) => `<option ${e === s.effort ? "selected" : ""}>${e}</option>`).join("")}</select></label></div>
     <h2>Editing</h2>
     <div class="row"><label>Video encoder <select name="encoder">${["auto", "h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox", "libx264"].map((e) => `<option ${e === s.encoder ? "selected" : ""}>${e}</option>`).join("")}</select></label>
@@ -467,6 +467,7 @@ document.addEventListener("submit", async (e) => {
 });
 document.addEventListener("change", async (e) => {
   const inp = e.target;
+  if (inp.id === "dir-mode") $("#ai-fields").hidden = inp.value !== "ai";
   if (page === "campaigns" && inp.type === "file" && inp.dataset.kind && inp.files[0]) {
     const fd = new FormData(); fd.append("kind", inp.dataset.kind); fd.append("file", inp.files[0]);
     await act(() => api(`/api/campaigns/${editing}/asset`, { method: "POST", body: fd }), "Uploaded"); render();

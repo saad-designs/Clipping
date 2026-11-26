@@ -21,6 +21,7 @@ from studio.editor import render as render_mod
 from studio.editor import transcribe
 from studio.editor.pipeline import probe
 from studio.store import Store
+from watcher import audio
 from studio.sync import safe
 
 log = logging.getLogger("worker")
@@ -146,12 +147,22 @@ class Worker:
         src = Path(clip["src_path"])
         try:
             duration, has_audio = probe(src)
-            words = clip["words"]
+            words, meta = clip["words"], dict(clip["meta"])
             if words is None:
                 self.status = f"#{cid}: transcribing"
-                ws = transcribe.transcribe(src, s.get("whisper_model") or "small", s.get("language")) if has_audio else []
+                ws, lang = transcribe.transcribe_full(src, s.get("whisper_model") or "small", s.get("language")) \
+                    if has_audio else ([], None)
                 words = [[round(w.start, 2), round(w.end, 2), w.text] for w in ws]
-                self.store.update_clip(cid, words=words)
+                meta["language"] = lang
+                self.store.update_clip(cid, words=words, meta=meta)
+            if has_audio and "loudness" not in meta:       # per-second loudness: finds the real payoff
+                self.status = f"#{cid}: measuring the audio"
+                try:
+                    meta["loudness"] = [[t, round(l, 1)] for t, l in audio.analyze(src, 0, timeout=300)]
+                except Exception as e:
+                    log.warning("loudness analysis failed: %s", e)
+                    meta["loudness"] = []
+                self.store.update_clip(cid, meta=meta)
             word_objs = [transcribe.Word(*w) for w in words]
 
             fc = clip["facecam"]
@@ -163,8 +174,9 @@ class Worker:
                 plan = clip["plan"]
             else:
                 self.status = f"#{cid}: director is planning the edit"
-                ctx = director.build_context({**clip["meta"], "channel": clip["channel"]}, camp, word_objs, fc, duration,
-                                             self.store.recent_styles(camp["name"]), clip["notes"], clip["plan"])
+                ctx = director.build_context({**meta, "channel": clip["channel"]}, camp, word_objs, fc, duration,
+                                             self.store.recent_styles(camp["name"]), clip["notes"], clip["plan"],
+                                             meta.get("loudness"), meta.get("language"), self.store.recent_hooks(camp["name"]))
                 plan = director.plan(ctx, src, s)
 
             self.status = f"#{cid}: rendering"

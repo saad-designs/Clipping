@@ -124,7 +124,10 @@ def detect(path, frames: list[np.ndarray] | None = None) -> FacecamResult:
     frames = frames if frames is not None else sample_frames(path)
     if not frames:
         return FacecamResult("none", notes=["no frames"])
-    per_frame = _detect(frames)
+    try:
+        per_frame = _detect(frames)
+    except Exception as e:   # e.g. an OpenCV build without the face detector files
+        return FacecamResult("none", frames=len(frames), notes=[f"face detection unavailable: {e}"])
     group, _ = _cluster(per_frame)
     # count frames, not boxes: frontal + profile can both fire on the same face in one frame
     hits = sum(1 for boxes in per_frame if any(
