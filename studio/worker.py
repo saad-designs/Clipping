@@ -204,6 +204,14 @@ class Worker:
                                              meta.get("loudness"), meta.get("language"), self.store.recent_hooks(camp["name"]))
                 plan = director.plan(ctx, src, s)
 
+            if plan.get("skip") and str(plan.get("source", "")).startswith("gemini") and not clip["notes"] \
+                    and not clip["lock_plan"]:
+                # the watching director saw it and turned it down (cutscene, nothing happens...): don't waste a render
+                self.store.update_clip(cid, status="rejected", plan=plan,
+                                       error=f"Director skipped it: {plan.get('skip_reason') or 'not worth posting'}")
+                log.info("clip #%s skipped by the director: %s", cid, plan.get("skip_reason"))
+                return
+            word_objs = director.streamer_words(word_objs, plan)
             self.status = f"#{cid}: rendering"
             out_dir = self.store.output_dir() / safe(camp["name"]) / "review"
             out = out_dir / f"{clip_stem(clip)}.mp4"

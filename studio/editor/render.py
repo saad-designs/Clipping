@@ -24,6 +24,36 @@ SFX_LEVEL = 0.6           # sounds sit under the voice (the files peak near full
 TARGET_LUFS = -14.0
 
 
+class Timeline:
+    """Maps source-clip time to the edited video's time when parts are cut out (jump cuts)."""
+
+    def __init__(self, segments):
+        self.segments = [(float(a), float(b)) for a, b in segments]
+        self.total = sum(b - a for a, b in self.segments)
+
+    def out(self, t: float) -> float | None:
+        acc = 0.0
+        for a, b in self.segments:
+            if a <= t <= b:
+                return acc + (t - a)
+            acc += b - a
+        return None
+
+    def words(self, words):
+        """Words in output time; words that fall in a cut are dropped."""
+        from studio.editor.transcribe import Word
+        out = []
+        for w in words:
+            s = self.out(w.start)
+            if s is None:
+                continue
+            e = self.out(w.end)
+            if e is None or e < s:
+                e = s + min(w.end - w.start, 0.6)
+            out.append(Word(s, e, w.text))
+        return out
+
+
 def stream_gain(src: Path, start: float, dur: float) -> float:
     """dB to bring this part of the stream to -14 LUFS. Capped so near-silent clips aren't blown up into hiss."""
     import json
@@ -63,17 +93,26 @@ def avoid_cam(gx: float, cam, window: float, margin: float = 0.06) -> float:
     return left / (1 - window)
 
 
-def layout_graph(layout: str, facecam: dict | None, game_x: float = 0.5, blur_zoom: float = 1.25) -> tuple[str, dict]:
-    """Filter graph from [0:v] to [lay] (1080x1920). Also returns where text fits best."""
+def _zoomed(label_in: str, label_out: str, w: int, h: int, zx: str | None) -> str:
+    if not zx:
+        return f"[{label_in}]null[{label_out}]"
+    return f"[{label_in}]scale=w='trunc({w}*({zx})/2)*2':h='trunc({h}*({zx})/2)*2':eval=frame,crop={w}:{h}[{label_out}]"
+
+
+def layout_graph(layout: str, facecam: dict | None, game_x: float = 0.5, blur_zoom: float = 1.25,
+                 cam_zoom: str | None = None, game_zoom: str | None = None) -> tuple[str, dict]:
+    """Filter graph from [0:v] to [lay] (1080x1920). Also returns where text fits best.
+    cam_zoom / game_zoom: punch-ins on just the webcam panel or just the gameplay panel (split layout)."""
     gx = min(max(game_x, 0.0), 1.0)
     if layout == "facecam_split" and facecam and facecam.get("cam"):
         cam_h = _even(H * CAM_SHARE)
         game_h = H - cam_h
         gx = avoid_cam(gx, facecam["cam"], W / (game_h * 16 / 9))   # streams are 16:9
         g = (f"[0:v]split=2[a][b];"
-             f"[a]{_rect(facecam['cam'])},scale={W}:{cam_h}:force_original_aspect_ratio=increase,crop={W}:{cam_h}[cam];"
+             f"[a]{_rect(facecam['cam'])},scale={W}:{cam_h}:force_original_aspect_ratio=increase,crop={W}:{cam_h}[cam0];"
              # game: full height, a 1080:game_h window, slid horizontally by game_x
-             f"[b]scale=-2:{game_h},crop={W}:{game_h}:(iw-{W})*{gx:.3f}:0[game];"
+             f"[b]scale=-2:{game_h},crop={W}:{game_h}:(iw-{W})*{gx:.3f}:0[game0];"
+             + _zoomed("cam0", "cam", W, cam_h, cam_zoom) + ";" + _zoomed("game0", "game", W, game_h, game_zoom) + ";"
              f"[cam][game]vstack[lay]")
         return g, {"hook_y": cam_h, "caption_y": cam_h + int(game_h * 0.62)}
     if layout == "face_crop":
@@ -111,17 +150,31 @@ def render(src: Path, plan: dict, out: Path, campaign: dict | None = None, words
            caption_style: dict | None = None, encoder: str = "auto", fps: int = 30) -> Path:
     """Render `src` according to a validated plan (see studio.director.validate)."""
     campaign = campaign or {}
-    start, end = plan["keep"]
-    dur = end - start
-    graph, spots = layout_graph(plan["layout"], facecam, plan.get("game_x", 0.5))
+    segments = [list(s) for s in plan.get("segments") or [plan["keep"]]]
+    start, end = segments[0][0], segments[-1][1]
+    timeline = Timeline(segments)
+    dur = timeline.total
+    split = plan["layout"] == "facecam_split" and facecam and facecam.get("cam")
+    by_target: dict[str, list] = {"face": [], "game": [], "full": []}
+    for z in plan.get("zooms", []):
+        at = timeline.out(z["at"])
+        if at is None:
+            continue
+        tgt = z.get("target") if split and z.get("target") in ("face", "game") else "full"
+        by_target[tgt].append({"at": at, "strength": z.get("strength", 0.15)})
+    graph, spots = layout_graph(plan["layout"], facecam, plan.get("game_x", 0.5),
+                                cam_zoom=zoom_expr(by_target["face"]), game_zoom=zoom_expr(by_target["game"]))
+    if len(segments) > 1:      # jump cuts: keep only the chosen parts of the trimmed input
+        sel = "+".join(f"between(t,{a - start:.3f},{b - start:.3f})" for a, b in segments)
+        graph = f"[0:v]select='{sel}',setpts=N/FRAME_RATE/TB[vsel];" + graph.replace("[0:v]", "[vsel]", 1)
     chain = "[lay]"
-    zx = zoom_expr([{"at": z["at"] - start, "strength": z.get("strength", 0.15)} for z in plan.get("zooms", [])])
+    zx = zoom_expr(by_target["full"])
     if zx:
         graph += (f";{chain}scale=w='trunc({W}*({zx})/2)*2':h='trunc({H}*({zx})/2)*2':eval=frame,"
                   f"crop={W}:{H}[zm]")
         chain = "[zm]"
 
-    inputs = ["-ss", f"{start:.2f}", "-t", f"{dur:.2f}", "-i", str(Path(src).resolve())]
+    inputs = ["-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(Path(src).resolve())]
     n_in = 1
     logo = campaign.get("logo_path")
     if logo and Path(logo).exists() and plan.get("logo"):
@@ -139,8 +192,9 @@ def render(src: Path, plan: dict, out: Path, campaign: dict | None = None, words
 
     sfx_inputs = []
     for s in plan.get("sfx", []):
-        if s.get("sound") in SFX:
-            sfx_inputs.append((n_in, max(0.0, float(s["at"]) - start), float(s.get("volume", 0.8)), s["sound"]))
+        at = timeline.out(float(s["at"]))
+        if s.get("sound") in SFX and at is not None:
+            sfx_inputs.append((n_in, at, float(s.get("volume", 0.8)), s["sound"]))
             inputs += ["-i", str(SFX_DIR / f"{s['sound']}.wav")]
             n_in += 1
 
@@ -148,7 +202,7 @@ def render(src: Path, plan: dict, out: Path, campaign: dict | None = None, words
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         style = dict(caption_style or {})
-        ass = captions.build_ass(words or [], start, end, style, preset=plan.get("caption_style"),
+        ass = captions.build_ass(timeline.words(words or []), 0.0, dur, style, preset=plan.get("caption_style"),
                                  emphasis=plan.get("emphasis_words", []), hook=plan.get("hook"),
                                  caption_y=spots["caption_y"], hook_y=spots["hook_y"],
                                  font=campaign.get("font_name"))
@@ -165,8 +219,11 @@ def render(src: Path, plan: dict, out: Path, campaign: dict | None = None, words
             # One steady gain to -14 LUFS (measured first), not loudnorm's dynamic mode: on a quiet
             # stream that pumped the background hiss up in every pause. Sounds go in *after* the
             # stream is levelled, under the voice, then a limiter catches peaks.
-            gain = stream_gain(src, start, dur)
-            mix = [f"[0:a]aresample=48000,highpass=f=60,volume={gain:.2f}dB[a0]"]
+            gain = stream_gain(src, start, end - start)
+            asel = ""
+            if len(segments) > 1:
+                asel = "aselect='" + "+".join(f"between(t,{a - start:.3f},{b - start:.3f})" for a, b in segments) + "',asetpts=N/SR/TB,"
+            mix = [f"[0:a]{asel}aresample=48000,highpass=f=60,volume={gain:.2f}dB[a0]"]
             labels = ["[a0]"]
             for idx, at, vol, _ in sfx_inputs:
                 ms = int(at * 1000)

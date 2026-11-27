@@ -101,12 +101,13 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
     def get_settings():
         s = store.settings()
         return {**s, "anthropic_api_key": mask(s.get("anthropic_api_key", "")), "token": mask(s.get("token", "")),
+                "gemini_api_key": mask(s.get("gemini_api_key", "")),
                 "twitch_client_secret": mask(s.get("twitch_client_secret", "")), "local_token": "",
                 "local_available": local is not None}
 
     @app.put("/api/settings")
     def put_settings(values: dict):
-        for secret in ("anthropic_api_key", "token", "twitch_client_secret"):   # masked values coming back aren't saved
+        for secret in ("anthropic_api_key", "gemini_api_key", "token", "twitch_client_secret"):   # masked values coming back aren't saved
             if secret in values and ("…" in str(values[secret]) or values[secret] == "set"):
                 values.pop(secret)
         values.pop("local_token", None)

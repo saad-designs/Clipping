@@ -186,6 +186,13 @@ async function renderReview() {
     ${clips.length ? `<div class="clips">${clips.map(reviewCard).join("")}</div>`
       : `<div class="empty"><b>Nothing to review yet.</b><br>When the server catches a hype moment for one of your campaigns, Studio edits it and it shows up here. You can also add a video yourself in <a href="#queue">Queue</a>.</div>`}`;
 }
+function directorMoves(p) {
+  const items = [];
+  if (p.hook?.text && p.hook_why) items.push(`<li><b>Hook:</b> ${esc(p.hook_why)}</li>`);
+  if (p.layout_why) items.push(`<li><b>Layout:</b> ${esc(p.layout_why)}</li>`);
+  for (const z of p.zooms || []) if (z.why) items.push(`<li><b>Punch-in on ${esc(z.target || "frame")} at ${z.at.toFixed(1)}s:</b> ${esc(z.why)}</li>`);
+  return items.length ? `<ul class="why" style="margin:0;padding-left:18px">${items.join("")}</ul>` : "";
+}
 function reviewCard(c, i) {
   const p = c.plan || {}, post = p.post || {};
   const m = c.meta || {};
@@ -193,11 +200,13 @@ function reviewCard(c, i) {
     <div class="phone"><video src="/api/clips/${c.id}/video?v=${Math.round(c.updated)}" controls playsinline preload="metadata"></video></div>
     <div class="side">
       <div class="head"><span class="chan">${esc(c.channel || c.source)}</span><span class="pill">${esc(c.campaign)}</span>${qualityPill(p.quality)}
-        <span class="pill ${p.source?.startsWith("ai") ? "info" : ""}">${p.source?.startsWith("ai") ? "Claude director" : "Free director"}</span>${p.kind ? `<span class="pill">${esc(p.kind)}</span>` : ""}
+        <span class="pill ${p.source?.startsWith("ai") || p.source?.startsWith("gemini") ? "info" : ""}">${p.source?.startsWith("ai") ? "Claude director" : p.source?.startsWith("gemini") ? "Gemini director" : "Rules director"}</span>${p.kind ? `<span class="pill">${esc(p.kind)}</span>` : ""}
         ${m.viewer_clips ? `<span class="pill good">🎬 viewers clipped this</span>` : ""}<span class="pill">${ago(c.created)}</span></div>
+      ${p.watched?.summary ? `<div class="why"><b>What it saw:</b> ${esc(p.watched.summary)}</div>` : ""}
       ${p.why ? `<div class="why"><b>Director:</b> ${esc(p.why)}</div>` : ""}
+      ${directorMoves(p)}
       ${p.skip ? `<div class="skip"><b>Director suggests skipping:</b> ${esc(p.skip_reason)}</div>` : ""}
-      <div class="facts"><span>length <b>${p.keep ? (p.keep[1] - p.keep[0]).toFixed(0) + "s" : "?"}</b></span><span>layout <b>${esc(LAYOUTS[p.layout] || p.layout)}</b></span>
+      <div class="facts"><span>length <b>${p.segments ? p.segments.reduce((n, s) => n + s[1] - s[0], 0).toFixed(0) + "s" : p.keep ? (p.keep[1] - p.keep[0]).toFixed(0) + "s" : "?"}</b></span>${p.segments?.length > 1 ? `<span>jump cuts <b>${p.segments.length - 1}</b></span>` : ""}<span>layout <b>${esc(LAYOUTS[p.layout] || p.layout)}</b></span>
         <span>captions <b>${esc(STYLES[p.caption_style] || p.caption_style)}</b></span><span>zooms <b>${(p.zooms || []).length}</b></span><span>sounds <b>${(p.sfx || []).map((s) => s.sound).join(", ") || "none"}</b></span></div>
       <div class="row">
         <label>Hook title <input id="hook-${c.id}" value="${esc(p.hook?.text || "")}" placeholder="No hook"></label>
@@ -461,9 +470,11 @@ async function renderPrefs() {
     </div>
     <label>Check for new captures every (minutes) <input type="number" name="poll_minutes" value="${esc(s.poll_minutes)}" min="1"></label>
     <h2>Director</h2>
-    <p class="sub" style="margin:0">The director decides how each clip is edited. <b>Free (built-in)</b> costs nothing: it reads what chat spammed, what was said and where the audio peaks. <b>Claude</b> also watches frames from the clip and writes the hook and caption like a human editor. It's paid per clip; switch when the clips start earning.</p>
-    <div class="row"><label>Director <select name="director" id="dir-mode"><option value="free" ${s.director !== "ai" ? "selected" : ""}>Free (built-in)</option><option value="ai" ${s.director === "ai" ? "selected" : ""}>Claude (paid, needs API key)</option></select></label>
+    <p class="sub" style="margin:0">The director decides how each clip is edited. <b>Gemini</b> (free key, no card) watches and listens to each clip, skips the ones not worth posting, and directs the edit: jump cuts over dead air, punch-ins on her reaction, a hook about what really happens, captions only for the streamer. <b>Rules</b> needs no key but can't see the video. <b>Claude</b> is the paid upgrade for later.</p>
+    <div class="row"><label>Director <select name="director" id="dir-mode">${[["gemini", "Gemini (free, watches the clip)"], ["free", "Rules (no key, can't see the video)"], ["ai", "Claude (paid, needs API key)"]].map(([k, l]) => `<option value="${k}" ${(s.director || "free") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <label>Claude model <select name="model">${[["claude-haiku-5-5", "Haiku 5.5 · cheapest, ~0.2¢ per clip"], ["claude-sonnet-5-5", "Sonnet 5.5 · ~1–2¢ per clip"], ["claude-opus-5-5", "Opus 5.5 · best, ~3–6¢ per clip"]].map(([k, l]) => `<option value="${k}" ${k === s.model ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+    <div class="row" id="gemini-fields" ${s.director === "gemini" ? "" : "hidden"}><label style="flex:2 1 260px">Gemini API key <span class="hint">Free at aistudio.google.com → Get API key (Google account, no card). Free-tier clips may be used by Google to improve their products.</span>
+      <input name="gemini_api_key" value="${esc(s.gemini_api_key || "")}" placeholder="AIza…" autocomplete="off"></label></div>
     <div class="row" id="ai-fields" ${s.director === "ai" ? "" : "hidden"}><label style="flex:2 1 260px">Anthropic API key <input name="anthropic_api_key" value="${esc(s.anthropic_api_key)}" placeholder="sk-ant-… (console.anthropic.com → API Keys)" autocomplete="off"></label>
       <label>Effort <select name="effort">${["low", "medium", "high"].map((e) => `<option ${e === s.effort ? "selected" : ""}>${e}</option>`).join("")}</select></label></div>
     <h2>Editing</h2>
@@ -521,7 +532,7 @@ document.addEventListener("submit", async (e) => {
 });
 document.addEventListener("change", async (e) => {
   const inp = e.target;
-  if (inp.id === "dir-mode") $("#ai-fields").hidden = inp.value !== "ai";
+  if (inp.id === "dir-mode") { $("#ai-fields").hidden = inp.value !== "ai"; $("#gemini-fields").hidden = inp.value !== "gemini"; }
   if (inp.id === "find-mode") { $("#vods-fields").hidden = inp.value !== "vods"; $("#lw-fields").hidden = inp.value !== "local"; $("#remote-fields").hidden = inp.value !== "server"; }
   if (["lw-n", "lw-q"].includes(inp.id)) dataEstimate();
   if (page === "campaigns" && inp.type === "file" && inp.dataset.kind && inp.files[0]) {

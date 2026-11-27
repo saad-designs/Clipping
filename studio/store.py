@@ -11,7 +11,7 @@ from pathlib import Path
 
 SETTING_DEFAULTS = {
     "server_url": "", "token": "", "anthropic_api_key": "", "model": "claude-opus-5-5", "effort": "medium",
-    "director": "free", "encoder": "auto", "whisper_model": "small", "language": None, "poll_minutes": 3,
+    "director": "free", "gemini_api_key": "", "encoder": "auto", "whisper_model": "small", "language": None, "poll_minutes": 3,
     "output_dir": "Campaigns",
     # one-PC mode: the stream watcher runs on this PC, started by Studio
     "find_mode": "vods",                 # vods: clip finished streams (free) | local: live on this PC | server

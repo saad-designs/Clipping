@@ -248,6 +248,8 @@ def validate(raw: dict, ctx: dict) -> dict:
     if end - start < lo:   # grow toward the end first, then the start
         end = min(dur, start + lo)
         start = max(0.0, end - lo)
+    segments = clean_segments(raw.get("_segments"), dur, lo, hi) if raw.get("_segments") else [[round(start, 2), round(end, 2)]]
+    start, end = segments[0][0], segments[-1][1]
 
     fc = dict(ctx["facecam"] or {})
     box = raw.get("webcam_box") or {}
@@ -261,10 +263,19 @@ def validate(raw: dict, ctx: dict) -> dict:
         layout = "face_crop" if fc.get("kind") == "center_face" else "blur_fit"
 
     def inside(t: float) -> bool:
-        return start + 0.2 <= t <= end - 0.3
+        return any(a + 0.2 <= t <= b - 0.3 for a, b in segments)
 
-    zooms = [{"at": round(_num(z.get("at"), -1), 2), "strength": round(min(max(_num(z.get("strength"), 0.14), 0.06), 0.25), 3)}
-             for z in raw.get("zooms") or [] if inside(_num(z.get("at"), -1))][:3]
+    zooms = []
+    for z in raw.get("zooms") or []:
+        at = _num(z.get("at"), -1)
+        if inside(at) and all(abs(at - o["at"]) >= 3 for o in zooms):     # punch-ins need room to breathe
+            item = {"at": round(at, 2), "strength": round(min(max(_num(z.get("strength"), 0.14), 0.06), 0.25), 3)}
+            if z.get("target") in ("face", "game"):
+                item["target"] = z["target"]
+            if z.get("why"):
+                item["why"] = str(z["why"])[:200]
+            zooms.append(item)
+    zooms = zooms[:3]
     sfx = [{"at": round(_num(s.get("at"), -1), 2), "sound": s.get("sound")}
            for s in raw.get("sfx") or [] if s.get("sound") in SFX and start <= _num(s.get("at"), -1) <= end - 0.2][:4]
 
@@ -294,14 +305,65 @@ def validate(raw: dict, ctx: dict) -> dict:
         "why": str(raw.get("why") or ""), "quality": q,
         "skip": bool(raw.get("skip")), "skip_reason": str(raw.get("skip_reason") or ""),
         "source": raw.get("_source", "ai"), "usage": raw.get("_usage"), "kind": raw.get("_kind"),
+        "segments": segments, "speech": [s for s in raw.get("_speech") or [] if isinstance(s, dict)],
+        "watched": raw.get("_watched") or None, "story": raw.get("_story") or None,
+        "hook_why": raw.get("_hook_why") or "", "layout_why": raw.get("_layout_why") or "",
     }
+
+
+def clean_segments(segs, dur: float, lo: float, hi: float) -> list[list[float]]:
+    """Kept parts: inside the clip, in order, no overlaps, no slivers, total within the campaign's length."""
+    out: list[list[float]] = []
+    for s in sorted(((min(max(_num(x.get("from"), 0), 0), dur), min(max(_num(x.get("to"), 0), 0), dur))
+                     for x in segs if isinstance(x, dict)), key=lambda p: p[0]):
+        a, b = s
+        if b - a < 0.6:
+            continue
+        if out and a - out[-1][1] < 0.4:          # a gap this small isn't worth a cut
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    if not out:
+        return [[0.0, min(dur, hi or dur)]]
+    total = sum(b - a for a, b in out)
+    while hi and total > hi:                       # too long: shorten from the end
+        a, b = out[-1]
+        cut = min(total - hi, b - a)
+        if cut >= b - a - 0.6 and len(out) > 1:
+            out.pop()
+        else:
+            out[-1][1] = b - cut
+        total = sum(b - a for a, b in out)
+    if lo and total < lo:                          # too short: let the last part run on
+        out[-1][1] = min(dur, out[-1][1] + (lo - total))
+    return [[round(a, 2), round(b, 2)] for a, b in out]
+
+
+def streamer_words(words: list[Word], plan: dict) -> list[Word]:
+    """Captions show what the streamer says, not game characters (the director marks who talks when)."""
+    other = [(float(s["from"]), float(s["to"])) for s in plan.get("speech") or []
+             if s.get("who") in ("game", "other") and "from" in s and "to" in s]
+    if not other:
+        return words
+    return [w for w in words if not any(a <= (w.start + w.end) / 2 <= b for a, b in other)]
 
 
 def plan(ctx: dict, clip_path, settings: dict) -> dict:
     """AI plan when a key is set, rules otherwise or on failure. Always validated."""
-    key = (settings or {}).get("anthropic_api_key") or ""
+    settings = settings or {}
+    key = settings.get("anthropic_api_key") or ""
     raw, note = None, ""
-    if key and (settings or {}).get("director", "free") == "ai":
+    if settings.get("director") == "gemini":
+        if not settings.get("gemini_api_key"):
+            note = "Gemini director picked but no key in Settings; used the free director."
+        else:
+            try:
+                from studio import gemini_director
+                raw = gemini_director.plan_raw(ctx, clip_path, settings["gemini_api_key"])
+            except Exception as e:
+                note = f"Gemini director unavailable ({type(e).__name__}: {str(e)[:200]}); used the free director."
+                log.warning(note)
+    elif key and settings.get("director", "free") == "ai":
         try:
             raw = ai_plan(ctx, clip_path, key, settings.get("model") or DEFAULT_MODEL, settings.get("effort") or "medium")
         except Exception as e:
