@@ -14,7 +14,9 @@ SETTING_DEFAULTS = {
     "director": "free", "encoder": "auto", "whisper_model": "small", "language": None, "poll_minutes": 3,
     "output_dir": "Campaigns",
     # one-PC mode: the stream watcher runs on this PC, started by Studio
-    "local_watcher": True, "local_token": "", "twitch_client_id": "", "twitch_client_secret": "",
+    "find_mode": "vods",                 # vods: clip finished streams (free) | local: live on this PC | server
+    "sweep_hours": 2, "sweep_days": 3,   # vods mode: check every N hours; look back N days the first time
+    "local_watcher": False, "local_token": "", "twitch_client_id": "", "twitch_client_secret": "",
     "max_recording": 3, "quality": "720p",
 }
 
@@ -22,6 +24,7 @@ CAMPAIGN_DEFAULTS = {
     "name": "", "url": "", "brief": "", "active": True, "channels": [],     # [{platform, login, facecam}]
     "min_seconds": 15, "max_seconds": 60, "target_seconds": 32, "required_text": [], "cta": "", "banned": "",
     "layout": None, "caption_style": None, "hook": True, "brand_color": "#E8202A",
+    "clips_per_stream": 5,
     "logo_path": None, "logo_corner": None, "logo_scale": 0.16, "logo_opacity": 0.92,
     "intro_path": None, "outro_path": None, "font_path": None, "font_name": None, "extra_hype_tokens": [],
 }
@@ -50,6 +53,8 @@ CREATE TABLE IF NOT EXISTS clips (
     updated REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_clips_status ON clips(status, updated);
+CREATE TABLE IF NOT EXISTS seen_vods (key TEXT PRIMARY KEY, at REAL NOT NULL);       -- streams already clipped
+CREATE TABLE IF NOT EXISTS sweeps (channel TEXT PRIMARY KEY, at REAL NOT NULL);      -- last check per streamer
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clips_moment ON clips(moment_id, campaign) WHERE moment_id IS NOT NULL;
 """
 
@@ -75,6 +80,7 @@ class Store:
         with self.lock:
             rows = {r["key"]: json.loads(r["value"]) for r in self.db.execute("SELECT * FROM settings")}
         s = {**SETTING_DEFAULTS, **rows}
+        s["local_watcher"] = s.get("find_mode") == "local"
         if s.get("local_watcher"):      # the watcher runs on this PC: talk to it directly
             s["server_url"], s["token"] = "http://127.0.0.1:8787", s.get("local_token", "")
         return s
@@ -205,6 +211,25 @@ class Store:
             rows = self.db.execute("SELECT plan FROM clips WHERE campaign=? AND plan IS NOT NULL "
                                    "ORDER BY updated DESC LIMIT ?", (campaign, n)).fetchall()
         return [((json.loads(r["plan"]).get("hook") or {}).get("text") or "") for r in rows]
+
+    def seen_vods(self) -> list[str]:
+        with self.lock:
+            return [r["key"] for r in self.db.execute("SELECT key FROM seen_vods")]
+
+    def mark_vod(self, key: str) -> None:
+        with self.lock:
+            self.db.execute("INSERT OR REPLACE INTO seen_vods VALUES (?, ?)", (key, time.time()))
+            self.db.commit()
+
+    def last_sweep(self, channel: str) -> float:
+        with self.lock:
+            r = self.db.execute("SELECT at FROM sweeps WHERE channel=?", (channel,)).fetchone()
+        return r["at"] if r else 0.0
+
+    def set_last_sweep(self, channel: str, at: float) -> None:
+        with self.lock:
+            self.db.execute("INSERT OR REPLACE INTO sweeps VALUES (?, ?)", (channel, at))
+            self.db.commit()
 
     def counts(self) -> dict:
         with self.lock:

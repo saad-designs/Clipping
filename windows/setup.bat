@@ -55,8 +55,8 @@ echo ==========================================================
 echo  Setup finished.
 echo  Double-click "Start Clipping.bat". Your browser opens the dashboard.
 echo  In the dashboard:
-echo    1. Settings: paste your Twitch Client ID and Secret
-echo    2. Campaigns: add your campaign, paste the brief, add streamers
-echo  Keep the window open while your streamers are live.
+echo    1. Campaigns: add your campaign, paste the brief, add streamers
+echo    2. Streamers: press "Check finished streams now"
+echo  Clips appear in Review. Keep the window open while you work.
 echo ==========================================================
 pause

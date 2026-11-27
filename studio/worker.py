@@ -43,6 +43,8 @@ class Worker:
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        self.last_sweep: dict = {}
+        self._sweep_now = False
 
     # ---- control --------------------------------------------------------------
     def start(self) -> None:
@@ -62,10 +64,16 @@ class Worker:
         self.wake()
 
     def _loop(self) -> None:
-        next_sync = 0.0
+        next_sync = next_sweep = 0.0
         while not self._stop.is_set():
             s = self.store.settings()
-            if s.get("server_url") and time.time() >= next_sync:
+            if s.get("find_mode", "vods") == "vods":
+                if self._sweep_now or time.time() >= next_sweep:
+                    self._sweep_now = False
+                    r = self.sweep_once()
+                    retry = 600 if r.get("errors") and not r.get("vods") else float(s.get("sweep_hours") or 2) * 3600
+                    next_sweep = time.time() + retry
+            elif s.get("server_url") and time.time() >= next_sync:
                 r = self.sync_once()
                 # a failed check (e.g. the watcher on this PC is still starting) is retried soon
                 next_sync = time.time() + (20 if r.get("error") else float(s.get("poll_minutes") or 3) * 60)
@@ -79,6 +87,22 @@ class Worker:
             self.status = "idle"
             self._wake.wait(timeout=10)
             self._wake.clear()
+
+    def request_sweep(self) -> None:
+        self._sweep_now = True
+        self.wake()
+
+    def sweep_once(self) -> dict:
+        from studio import sweep
+        s = self.store.settings()
+        try:
+            r = sweep.sweep(self.store, float(s.get("sweep_days") or 3), on_status=lambda m: setattr(self, "status", m))
+        except Exception as e:
+            log.exception("sweep failed")
+            r = {"new_clips": 0, "vods": 0, "errors": [f"{type(e).__name__}: {e}"]}
+        self.last_sweep = {**r, "at": time.time()}
+        self.status = "idle"
+        return r
 
     # ---- pulling captures from the server -----------------------------------------
     def sync_once(self) -> dict:

@@ -80,7 +80,7 @@ class SupervisorTests(unittest.TestCase):
         self.assertFalse(self.lw.running())
 
     def test_settings_written_for_the_watcher(self):
-        self.store.save_settings({"twitch_client_id": "id1", "twitch_client_secret": "sec", "max_recording": 2, "quality": "1080p"})
+        self.store.save_settings({"find_mode": "local", "twitch_client_id": "id1", "twitch_client_secret": "sec", "max_recording": 2, "quality": "1080p"})
         cfg = yaml.safe_load(self.lw.write_settings().read_text())
         self.assertEqual(cfg["twitch"], {"client_id": "id1", "client_secret": "sec"})
         self.assertEqual(cfg["recorder"]["max_concurrent"], 2)

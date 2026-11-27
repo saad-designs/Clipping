@@ -48,7 +48,7 @@ def mask(key: str) -> str:
     return (key[:7] + "…" + key[-4:]) if key and len(key) > 12 else ("set" if key else "")
 
 
-WATCHER_KEYS = ("local_watcher", "twitch_client_id", "twitch_client_secret", "max_recording", "quality")
+WATCHER_KEYS = ("find_mode", "local_watcher", "twitch_client_id", "twitch_client_secret", "max_recording", "quality")
 
 
 def create_app(store: Store, worker: Worker | None = None, start_worker: bool = True, local=None) -> FastAPI:
@@ -91,7 +91,8 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
     @app.get("/api/state")
     def state():
         return {"counts": store.counts(), "worker": worker.status, "current": worker.current,
-                "last_sync": worker.last_sync, "jobs": len(worker.jobs),
+                "last_sync": worker.last_sync, "last_sweep": worker.last_sweep, "jobs": len(worker.jobs),
+                "find_mode": store.settings().get("find_mode", "vods"),
                 "ai": bool(store.settings().get("anthropic_api_key")) and store.settings().get("director") == "ai",
                 "director": store.settings().get("director", "free"),
                 "output_dir": str(store.output_dir())}
@@ -126,6 +127,23 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
         if not local_on():
             return {"enabled": False}
         return {"enabled": True, **local.status()}
+
+    @app.get("/api/sweep")
+    def sweep_status():
+        chans = []
+        for c in store.campaigns():
+            for ch in c["channels"]:
+                key = f"{ch['platform']}:{ch['login']}"
+                chans.append({"channel": key, "campaign": c["name"], "active": c["active"],
+                              "last_checked": store.last_sweep(key) or None})
+        return {"last": worker.last_sweep, "worker": worker.status, "channels": chans,
+                "every_hours": store.settings().get("sweep_hours", 2)}
+
+    @app.post("/api/sweep")
+    def sweep_now():
+        """Check every streamer for finished streams now (instead of waiting for the schedule)."""
+        worker.request_sweep()
+        return {"ok": True}
 
     @app.post("/api/sync")
     def sync_now():
