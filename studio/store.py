@@ -25,6 +25,8 @@ CAMPAIGN_DEFAULTS = {
     "min_seconds": 15, "max_seconds": 60, "target_seconds": 32, "required_text": [], "cta": "", "banned": "",
     "layout": None, "caption_style": None, "hook": True, "brand_color": "#E8202A",
     "clips_per_stream": 5,
+    "pronoun": "they",                   # streamer's pronoun in hooks: she | he | they
+    "games": [],                         # only clip these games (Twitch category / stream title); [] = any
     "logo_path": None, "logo_corner": None, "logo_scale": 0.16, "logo_opacity": 0.92,
     "intro_path": None, "outro_path": None, "font_path": None, "font_name": None, "extra_hype_tokens": [],
 }

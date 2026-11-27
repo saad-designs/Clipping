@@ -40,8 +40,14 @@ def _edit_all(cfg, files=None, layout=None) -> int:
 def cmd_check(cfg, _args) -> None:
     print("ffmpeg:   ", "ok" if shutil.which("ffmpeg") else "MISSING: install ffmpeg and make sure it's on PATH")
     print("encoder:  ", encode.pick(cfg["editing"].get("encoder", "auto")))
-    print("whisper:  ", f"ok (model {cfg['captions']['whisper_model']})" if transcribe.available()
-          else "not installed: pip install faster-whisper (clips will have no captions)")
+    if not transcribe.available():
+        print("whisper:   not installed: pip install faster-whisper (clips will have no captions)")
+    else:
+        try:   # really run it: an import can succeed while the GPU libraries are missing
+            where = transcribe.self_test(cfg["captions"]["whisper_model"])
+            print("whisper:  ", f"ok (model {cfg['captions']['whisper_model']}, on the {where})")
+        except Exception as e:
+            print("whisper:   BROKEN:", str(e)[:200], "(clips will have no captions)")
     print("output:   ", cfg["output_dir"].resolve())
     server_url, token = cfg["server_url"], cfg["token"]
     find_mode = "vods"

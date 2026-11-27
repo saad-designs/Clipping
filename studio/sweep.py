@@ -113,9 +113,40 @@ def top_chat(chat: list, at: float) -> list:
 
 
 # ----------------------------------------------------------------------------- finding streams
+def _chapters(node: dict) -> list[tuple[float, float, str]]:
+    """[(start, end, game)] for a Twitch VOD. Streamers switch games mid-stream, and the VOD's own
+    category is only the one it started with, so the chapter markers are the truth."""
+    duration = float(node.get("lengthSeconds") or 0)
+    marks = []
+    for e in ((node.get("moments") or {}).get("edges") or []):
+        m = e.get("node") or {}
+        game = (((m.get("details") or {}).get("game")) or {}).get("name") or ""
+        marks.append((float(m.get("positionMilliseconds") or 0) / 1000, game))
+    if not marks:
+        return [(0.0, duration, ((node.get("game") or {}).get("name")) or "")]
+    marks.sort()
+    return [(start, marks[i + 1][0] if i + 1 < len(marks) else duration, game) for i, (start, game) in enumerate(marks)]
+
+
+def allowed_ranges(v: dict, games: list[str]) -> list[tuple[float, float]] | None:
+    """Parts of a VOD that show one of the campaign's games. None = no filter (clip anything).
+
+    A part counts when its game name contains one of `games` (case-insensitive). When Twitch has
+    no game for a part (or the platform gives none), the stream title decides instead.
+    """
+    terms = [g.strip().lower() for g in games or [] if g and g.strip()]
+    if not terms:
+        return None
+    hit = lambda s: any(t in (s or "").lower() for t in terms)
+    parts = v.get("chapters") or [(0.0, v.get("duration") or 0.0, "")]
+    return [(s, e) for s, e, game in parts if hit(game) or (not game and hit(v.get("title")))]
+
+
 def twitch_vods(login: str, since: float) -> tuple[list[dict], list[dict]]:
     """Finished VODs newer than `since`, and the channel's popular clips this week (with offsets)."""
-    q = ('query { user(login:"%s") { videos(first: 10, type: ARCHIVE) { edges { node { id title lengthSeconds createdAt status } } } '
+    q = ('query { user(login:"%s") { videos(first: 10, type: ARCHIVE) { edges { node { id title lengthSeconds createdAt status '
+         'game { name } moments(momentRequestType: VIDEO_CHAPTER_MARKERS) { edges { node { positionMilliseconds '
+         'details { ... on GameChangeMomentDetails { game { name } } } } } } } } } '
          'clips(first: 50, criteria:{period: LAST_WEEK, sort: VIEWS_DESC}) { edges { node { viewCount durationSeconds '
          'videoOffsetSeconds video { id } } } } } }' % login)
     user = (_gql(q).get("data") or {}).get("user") or {}
@@ -124,7 +155,8 @@ def twitch_vods(login: str, since: float) -> tuple[list[dict], list[dict]]:
         n = e["node"]
         if n.get("status") == "RECORDED" and _ts(n["createdAt"]) > since:
             vods.append({"id": n["id"], "title": n.get("title", ""), "duration": float(n.get("lengthSeconds") or 0),
-                         "created": _ts(n["createdAt"]), "url": f"https://www.twitch.tv/videos/{n['id']}"})
+                         "created": _ts(n["createdAt"]), "url": f"https://www.twitch.tv/videos/{n['id']}",
+                         "chapters": _chapters(n)})
     clips = [e["node"] for e in ((user.get("clips") or {}).get("edges") or []) if e["node"].get("video")]
     return vods, clips
 
@@ -160,8 +192,12 @@ def kick_vods(slug: str, since: float) -> list[dict]:
 
 
 # ----------------------------------------------------------------------------- picking moments
-def pick_moments(platform: str, v: dict, clips: list[dict], top: int, workdir: Path) -> tuple[list[dict], list]:
-    """[{"at", "score", "viewer_clips"}], plus the chat replay (for top_chat)."""
+def pick_moments(platform: str, v: dict, clips: list[dict], top: int, workdir: Path,
+                 allowed: list[tuple[float, float]] | None = None) -> tuple[list[dict], list]:
+    """[{"at", "score", "viewer_clips"}], plus the chat replay (for top_chat).
+
+    `allowed`: only pick moments inside these (start, end) ranges, e.g. the campaign's game.
+    """
     chat: list = []
     if platform == "twitch":
         chat = vod.twitch_chat(v["id"])
@@ -179,6 +215,9 @@ def pick_moments(platform: str, v: dict, clips: list[dict], top: int, workdir: P
         scored.append((at, 8.0 + min(c.get("viewCount", 0), 5000) / 500))
     if len(scored) < top and platform != "twitch":       # no chat replay: fall back to the audio
         scored += _audio_scores(platform, v, workdir)
+    if allowed is not None:
+        scored = [(at, s) for at, s in scored if any(a <= at <= b for a, b in allowed)]
+        vc = [c for c in vc if any(a <= float(c["videoOffsetSeconds"]) <= b for a, b in allowed)]
     picks = vod.pick(scored, top, 90, duration)
     moments = []
     for at, score in picks:
@@ -236,9 +275,13 @@ def sweep(store, max_age_days: float = 3.0, on_status=lambda s: None) -> dict:
                     vkey = f"{ch['platform']}:{v['id']}:{camp['name']}"
                     if vkey in seen:
                         continue
+                    allowed = allowed_ranges(v, camp.get("games") or [])
+                    if allowed is not None and not allowed:
+                        log.info("skipping %s %s: not one of %s", key, v["title"][:50], camp["games"])
+                        continue
                     on_status(f"finding the best moments in {key}: {v['title'][:50]}")
                     with tempfile.TemporaryDirectory() as tmp:
-                        moments, chat = pick_moments(ch["platform"], v, clips, top, Path(tmp))
+                        moments, chat = pick_moments(ch["platform"], v, clips, top, Path(tmp), allowed)
                     m3u8 = v.get("m3u8") or media_url(v["url"])
                     for i, m in enumerate(moments, 1):
                         on_status(f"downloading moment {i}/{len(moments)} from {key}")

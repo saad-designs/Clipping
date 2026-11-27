@@ -39,6 +39,17 @@ def low_freq_db(path, start, dur=0.6):
     return float(line.split("mean_volume:")[1].split("dB")[0])
 
 
+class AvoidCamTests(unittest.TestCase):
+    def test_game_window_slides_off_the_webcam(self):
+        win = 0.51                                              # 1080 of a 2116-wide game strip
+        cam = [0.748, 0.0, 0.233, 0.31]                         # top-right webcam, like a real stream
+        gx = render.avoid_cam(0.5, cam, win)
+        self.assertLessEqual(gx * (1 - win) + win, cam[0] - 0.06 + 1e-9)    # right edge clears the cam
+        left_cam = [0.02, 0.6, 0.2, 0.3]
+        self.assertGreaterEqual(render.avoid_cam(0.0, left_cam, win) * (1 - win), 0.28 - 1e-9)
+        self.assertEqual(render.avoid_cam(0.5, [0.0, 0.0, 0.1, 0.1], win), 0.5)   # no overlap: unchanged
+
+
 @unittest.skipUnless(HAS_FFMPEG, "ffmpeg not installed")
 class RenderTests(unittest.TestCase):
     def test_full_hype_render(self):

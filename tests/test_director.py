@@ -157,6 +157,19 @@ class FreeDirectorTests(unittest.TestCase):
         hooks = fd.hook_candidates("shock", [], [["NO WAY", 40]], 10, "en")
         self.assertEqual(hooks[0], 'CHAT SPAMMED "NO WAY"')
 
+    def test_hooks_use_the_streamers_pronoun(self):
+        from studio import free_director as fd
+        she = fd.hook_candidates("shock", [], [], 10, "en", "she")
+        self.assertIn("SHE DIDN'T SEE THAT COMING", she)
+        self.assertFalse(any(" HE " in f" {h} " or "{" in h for h in she))
+        self.assertIn("THEY DIDN'T SEE THAT COMING", fd.hook_candidates("shock", [], [], 10, "en"))   # default
+        self.assertIn("THIS MADE HER DAY", fd.hook_candidates("wholesome", [], [], 10, "en", "she"))
+        self.assertIn("WIE HAT SIE DAS ÜBERLEBT?", fd.hook_candidates("clutch", [], [], 10, "de", "she"))
+
+    def test_post_title_keeps_apostrophes(self):
+        from studio import free_director as fd
+        self.assertEqual(fd.title_case("SHE DIDN'T SEE THAT COMING"), "She Didn't See That Coming")
+
     def test_quality_range(self):
         from studio import free_director as fd
         self.assertLessEqual(fd.quality({"z_hype": 30}, 20, True, 3), 10)

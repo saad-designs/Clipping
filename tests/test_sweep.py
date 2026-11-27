@@ -60,6 +60,26 @@ class PickingTests(unittest.TestCase):
         self.assertAlmostEqual(moments[0]["at"], 1018.0)
         self.assertEqual(moments[0]["viewer_clips"], 1)
 
+    def test_game_filter_uses_chapters_then_title(self):
+        # labelled "Just Chatting" but switches to GTA at 3 min, like a real VOD
+        node = {"lengthSeconds": 3600, "game": {"name": "Just Chatting"}, "moments": {"edges": [
+            {"node": {"positionMilliseconds": 0, "details": {"game": {"name": "Just Chatting"}}}},
+            {"node": {"positionMilliseconds": 180000, "details": {"game": {"name": "Grand Theft Auto VI"}}}},
+            {"node": {"positionMilliseconds": 3000000, "details": {}}}]}}
+        v = {"title": "playing scary games", "duration": 3600.0, "chapters": sweep._chapters(node)}
+        self.assertEqual(sweep.allowed_ranges(v, ["grand theft auto vi"]), [(180.0, 3000.0)])
+        self.assertIsNone(sweep.allowed_ranges(v, []))                       # no games set: clip anything
+        no_chapters = {"title": "GTA 6 LAUNCH!!!!", "duration": 600.0, "chapters": sweep._chapters({"lengthSeconds": 600})}
+        self.assertEqual(sweep.allowed_ranges(no_chapters, ["GTA"]), [(0.0, 600.0)])   # title decides
+        self.assertEqual(sweep.allowed_ranges({"title": "Silent Hill", "duration": 9.0}, ["GTA"]), [])
+
+    def test_moments_outside_the_game_are_dropped(self):
+        v = {"id": "1", "duration": 3600.0, "url": "x"}
+        clips = [{"video": {"id": "1"}, "videoOffsetSeconds": o, "durationSeconds": 30, "viewCount": 100} for o in (100, 2000)]
+        with mock.patch.object(sweep.vod, "twitch_chat", return_value=[]):
+            moments, _ = sweep.pick_moments("twitch", v, clips, 5, Path("."), allowed=[(1500.0, 3600.0)])
+        self.assertEqual([round(m["at"]) for m in moments], [2018])
+
     def test_top_chat_ignores_bots(self):
         chat = [(10, f"u{i}", "KEKW") for i in range(5)] + [(11, "Nightbot", "KEKW")] * 9 + [(99, "u", "W")]
         self.assertEqual(sweep.top_chat(chat, 10), [["KEKW", 5]])

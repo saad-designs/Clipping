@@ -41,22 +41,23 @@ SPEECH = {
     "wholesome": re.compile(r"\b(thank you|love you|so sweet|wholesome|danke)\b", re.I),
 }
 
+# {HE}/{HIS} are filled from the campaign's streamer pronoun (she / he / they), see pronouns().
 TEMPLATES = {
     "en": {
-        "funny": ["I CAN'T BREATHE", "CHAT WAS CRYING", "HE DIDN'T MEAN TO SAY THAT", "THIS GOT OUT OF HAND", "WORST TIMING EVER"],
-        "shock": ["HE DIDN'T SEE THAT COMING", "NOBODY EXPECTED THIS", "WAIT... WHAT?", "THIS CAN'T BE REAL", "CHAT WENT SILENT"],
-        "hype": ["HE ACTUALLY DID IT", "CHAT WENT CRAZY", "CLEANEST PLAY EVER", "THIS IS WHY WE WATCH"],
-        "fail": ["THIS WENT WRONG FAST", "IT ALL FELL APART", "INSTANT REGRET", "HE SHOULDN'T HAVE DONE THAT"],
-        "clutch": ["LAST SECOND CLUTCH", "HOW DID HE SURVIVE THIS?", "NO WAY HE PULLED THAT OFF"],
-        "wholesome": ["THIS MADE HIS DAY", "CHAT WAS SO WHOLESOME", "CUTEST MOMENT ON STREAM"],
+        "funny": ["I CAN'T BREATHE", "CHAT WAS CRYING", "{HE} DIDN'T MEAN TO SAY THAT", "THIS GOT OUT OF HAND", "WORST TIMING EVER"],
+        "shock": ["{HE} DIDN'T SEE THAT COMING", "NOBODY EXPECTED THIS", "WAIT... WHAT?", "THIS CAN'T BE REAL", "CHAT WENT SILENT"],
+        "hype": ["{HE} ACTUALLY DID IT", "CHAT WENT CRAZY", "CLEANEST PLAY EVER", "THIS IS WHY WE WATCH"],
+        "fail": ["THIS WENT WRONG FAST", "IT ALL FELL APART", "INSTANT REGRET", "{HE} SHOULDN'T HAVE DONE THAT"],
+        "clutch": ["LAST SECOND CLUTCH", "HOW DID {HE} SURVIVE THIS?", "NO WAY {HE} PULLED THAT OFF"],
+        "wholesome": ["THIS MADE {HIS} DAY", "CHAT WAS SO WHOLESOME", "CUTEST MOMENT ON STREAM"],
     },
     "de": {
         "funny": ["ICH KANN NICHT MEHR", "DAS WAR NICHT GEPLANT", "CHAT IST ESKALIERT", "SCHLECHTESTES TIMING EVER"],
         "shock": ["DAMIT HAT KEINER GERECHNET", "WARTE... WAS?", "DAS KANN NICHT ECHT SEIN", "CHAT WAR SPRACHLOS"],
-        "hype": ["ER HAT ES WIRKLICH GESCHAFFT", "CHAT DREHT DURCH", "SAUBERSTER MOVE EVER"],
+        "hype": ["{HE} HAT ES WIRKLICH GESCHAFFT", "CHAT DREHT DURCH", "SAUBERSTER MOVE EVER"],
         "fail": ["DAS GING SCHIEF", "SOFORT BEREUT", "DAS WAR EIN FEHLER", "ALLES GING KAPUTT"],
-        "clutch": ["IN LETZTER SEKUNDE", "WIE HAT ER DAS ÜBERLEBT?"],
-        "wholesome": ["DAS HAT SEINEN TAG GERETTET", "CHAT WAR SO LIEB"],
+        "clutch": ["IN LETZTER SEKUNDE", "WIE HAT {HE} DAS ÜBERLEBT?"],
+        "wholesome": ["DAS HAT {HIS} TAG GERETTET", "CHAT WAR SO LIEB"],
     },
     "es": {
         "funny": ["NO PUEDO MÁS", "EL CHAT LLORABA DE RISA", "ESTO SE SALIÓ DE CONTROL"],
@@ -76,10 +77,23 @@ SFX_FOR = {"funny": ["pop", "ding"], "shock": ["boom"], "hype": ["bass_drop"], "
 EMOJI = {"funny": "💀", "shock": "😳", "hype": "🔥", "fail": "😭", "clutch": "😮‍💨", "wholesome": "🥹"}
 CAPTION = {
     "en": {"funny": "I can't stop laughing at this {e}", "shock": "Did NOT expect that {e}", "hype": "Chat went crazy {e}",
-           "fail": "This went so wrong {e}", "clutch": "How did he pull this off {e}", "wholesome": "This made my day {e}"},
+           "fail": "This went so wrong {e}", "clutch": "How did {he} pull this off {e}", "wholesome": "This made my day {e}"},
     "de": {"funny": "Ich kann nicht mehr {e}", "shock": "Damit hat keiner gerechnet {e}", "hype": "Chat ist durchgedreht {e}",
-           "fail": "Das ging so schief {e}", "clutch": "Wie hat er das geschafft {e}", "wholesome": "So schön {e}"},
+           "fail": "Das ging so schief {e}", "clutch": "Wie hat {he} das geschafft {e}", "wholesome": "So schön {e}"},
 }
+PRONOUNS = {"en": {"she": ("SHE", "HER"), "he": ("HE", "HIS"), "they": ("THEY", "THEIR")},
+            "de": {"she": ("SIE", "IHREN"), "he": ("ER", "SEINEN"), "they": ("ER", "SEINEN")}}
+
+
+def pronouns(text: str, pronoun: str | None, lang: str) -> str:
+    """Fill {HE}/{HIS} (hooks, upper case) and {he} (captions) for the streamer."""
+    he, his = PRONOUNS.get(lang, PRONOUNS["en"]).get((pronoun or "they").lower(), PRONOUNS["en"]["they"])
+    return text.replace("{HE}", he).replace("{HIS}", his).replace("{he}", he.lower())
+
+
+def title_case(text: str) -> str:
+    """'DIDN'T SEE THAT' -> "Didn't See That" (str.title() gives "Didn'T")."""
+    return " ".join(w[:1].upper() + w[1:].lower() for w in text.split())
 STRONG = re.compile(r"\b(no way|what|wait|oh my god|omg|holy|let'?s go|insane|crazy|why|how|stop|no+|yes+|"
                     r"wtf|nein|was|warum|alter|digga|dead|died|verstorben|parachute|fallschirm)\b", re.I)
 
@@ -122,7 +136,8 @@ def lang_of(language: str | None) -> str:
     return language if language in TEMPLATES else "en"
 
 
-def hook_candidates(kind: str, words: list[Word], top_chat: list, at: float, language: str | None) -> list[str]:
+def hook_candidates(kind: str, words: list[Word], top_chat: list, at: float, language: str | None,
+                    pronoun: str | None = None) -> list[str]:
     """Best first: a short line said near the payoff, what chat spammed, then templates for this type."""
     lang = lang_of(language)
     out = []
@@ -137,7 +152,7 @@ def hook_candidates(kind: str, words: list[Word], top_chat: list, at: float, lan
         if n >= 8 and 1 <= len(p) <= 12 and not p.startswith("@"):
             out.append(CHAT_HOOK[lang if lang in CHAT_HOOK else "en"].format(p=p))
             break
-    out += TEMPLATES[lang][kind]
+    out += [pronouns(t, pronoun, lang) for t in TEMPLATES[lang][kind]]
     return out
 
 
@@ -173,8 +188,10 @@ def rule_plan(ctx: dict, seed: int | None = None) -> dict:
         style = rng.choice([s for s in PRESETS if s not in recent_styles] or list(PRESETS))
 
     recent_hooks = set(ctx.get("recent_hooks", []))
-    hooks = [h for h in hook_candidates(kind, words, top_chat, at, ctx.get("language")) if h not in recent_hooks]
-    hook = hooks[0] if hooks else rng.choice(TEMPLATES[lang_of(ctx.get("language"))][kind])
+    pronoun = c.get("pronoun")
+    lang = lang_of(ctx.get("language"))
+    hooks = [h for h in hook_candidates(kind, words, top_chat, at, ctx.get("language"), pronoun) if h not in recent_hooks]
+    hook = hooks[0] if hooks else pronouns(rng.choice(TEMPLATES[lang][kind]), pronoun, lang)
 
     strength = 0.18 if pay["strength_db"] >= 8 else 0.14 if pay["strength_db"] >= 4 else 0.11
     zooms = [{"at": round(at, 2), "strength": strength}]
@@ -192,9 +209,8 @@ def rule_plan(ctx: dict, seed: int | None = None) -> dict:
         clean = re.sub(r"[^\w'äöüÄÖÜß]", "", w.text)
         if at - 3 <= w.start <= at + 2 and (STRONG.search(w.text) or len(clean) >= 7) and clean.lower() not in {e.lower() for e in emph}:
             emph.append(clean)
-    lang = lang_of(ctx.get("language"))
     streamer = ctx["channel"].split(":")[-1]
-    cap = CAPTION.get(lang, CAPTION["en"])[kind].format(e=EMOJI[kind])
+    cap = pronouns(CAPTION.get(lang, CAPTION["en"])[kind], pronoun, lang).format(e=EMOJI[kind])
     q = quality(sig, pay["strength_db"], bool(words), int((ctx.get("viewer_clips") or 0)))
     why = (f"Free director: a {kind} moment ({'chat: ' + ', '.join(str(p[0]) for p in top_chat[:2]) if top_chat else 'from the transcript'}); "
            f"zoom and sound on the loudest second at {at:.1f}s (+{pay['strength_db']:.0f} dB).")
@@ -204,7 +220,7 @@ def rule_plan(ctx: dict, seed: int | None = None) -> dict:
         "hook_text": hook if c.get("hook", True) else "", "hook_seconds": 2.5, "caption_style": style,
         "emphasis_words": [e for e in emph if e][:3], "zooms": zooms, "sfx": sfx,
         "logo_corner": c.get("logo_corner") or ("top_right" if c.get("logo_path") else "none"),
-        "post_title": hook.title()[:80], "post_caption": f"{cap} (via {streamer})" if streamer else cap,
+        "post_title": title_case(hook)[:80], "post_caption": f"{cap} (via {streamer})" if streamer else cap,
         "hashtags": [], "why": why, "quality": q, "skip": q <= 2,
         "skip_reason": "weak chat reaction, quiet audio and no speech" if q <= 2 else "",
         "_source": "free", "_kind": kind,

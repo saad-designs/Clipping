@@ -173,7 +173,7 @@ class Worker:
         try:
             duration, has_audio = probe(src)
             words, meta = clip["words"], dict(clip["meta"])
-            if words is None:
+            if not words and has_audio:      # empty = nothing said, or whisper failed last time: try again
                 self.status = f"#{cid}: transcribing"
                 ws, lang = transcribe.transcribe_full(src, s.get("whisper_model") or "small", s.get("language")) \
                     if has_audio else ([], None)

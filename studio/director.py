@@ -134,6 +134,7 @@ def _user_content(ctx: dict, frames: list[bytes], frame_times: list[float]) -> l
         "preferred_layout": c.get("layout") or "director decides",
         "preferred_caption_style": c.get("caption_style") or "director decides (vary)",
         "hook_enabled": c.get("hook", True),
+        "streamer_pronoun": c.get("pronoun") or "they",
     }
     fc = ctx["facecam"]
     info = {
@@ -181,7 +182,7 @@ def ai_plan(ctx: dict, clip_path, api_key: str, model: str = DEFAULT_MODEL, effo
 
 
 # --------------------------------------------------------------------------- rule-based director
-GENERIC_HOOKS = ["WAIT FOR IT", "CHAT LOST IT", "HE DIDN'T SEE THIS COMING", "THIS WENT WRONG FAST",
+GENERIC_HOOKS = ["WAIT FOR IT", "CHAT LOST IT", "NOBODY SAW THIS COMING", "THIS WENT WRONG FAST",
                  "NOBODY EXPECTED THIS", "WATCH TILL THE END", "THE REACTION THOUGH"]
 
 
@@ -288,7 +289,7 @@ def validate(raw: dict, ctx: dict) -> dict:
                                 "box_color": c.get("brand_color") or "#E8202A"} if hook_text else None,
         "caption_style": style, "emphasis_words": [str(w) for w in raw.get("emphasis_words") or []][:4],
         "zooms": zooms, "sfx": sfx, "logo": logo,
-        "post": {"title": str(raw.get("post_title") or hook_text.title())[:100],
+        "post": {"title": str(raw.get("post_title") or " ".join(w[:1].upper() + w[1:].lower() for w in hook_text.split()))[:100],
                  "caption": str(raw.get("post_caption") or ""), "hashtags": tags},
         "why": str(raw.get("why") or ""), "quality": q,
         "skip": bool(raw.get("skip")), "skip_reason": str(raw.get("skip_reason") or ""),

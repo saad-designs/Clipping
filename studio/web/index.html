@@ -335,6 +335,8 @@ function campaignForm(c) {
       <textarea name="brief" rows="7">${v("brief")}</textarea></label>
     <div><h2 style="margin-bottom:8px">Streamers</h2><div id="chans" style="display:flex;flex-direction:column;gap:8px">${(c?.channels?.length ? c.channels : [undefined]).map(chanRow).join("")}</div>
       <button type="button" id="addchan" style="margin-top:8px">+ Add streamer</button></div>
+    <label>Only these games <span class="hint">Comma-separated, as Twitch names them. Only parts of a stream showing one of these get clipped (Twitch chapters; otherwise the stream title). Empty = any game.</span>
+      <input name="games" value="${esc((c?.games || []).join(", "))}" placeholder="e.g. Grand Theft Auto VI, GTA"></label>
     <div class="row">
       <label>Min length (s) <input type="number" name="min_seconds" value="${v("min_seconds", 15)}"></label>
       <label>Max length (s) <input type="number" name="max_seconds" value="${v("max_seconds", 60)}"></label>
@@ -347,6 +349,7 @@ function campaignForm(c) {
     <div class="row">
       <label>Layout <select name="layout"><option value="">Director decides</option>${Object.entries(LAYOUTS).map(([k, l]) => `<option value="${k}" ${c?.layout === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <label>Caption style <select name="caption_style"><option value="">Director varies it</option>${Object.entries(STYLES).map(([k, l]) => `<option value="${k}" ${c?.caption_style === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label>Streamer is <select name="pronoun">${[["they", "they (unsure)"], ["she", "she"], ["he", "he"]].map(([k, l]) => `<option value="${k}" ${(c?.pronoun || "they") === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <label>Hook title <select name="hook"><option value="true" ${c?.hook !== false ? "selected" : ""}>On</option><option value="false" ${c?.hook === false ? "selected" : ""}>Off</option></select></label>
       <label>Brand colour <input type="color" name="brand_color" value="${v("brand_color", "#E8202A")}" style="height:38px;padding:3px"></label></div>
     <div class="card" style="background:var(--raised)"><h2>Files</h2>${c ? "" : `<p class="sub" style="margin:0">Save the campaign first, then upload files.</p>`}
@@ -366,8 +369,9 @@ function readCampaign() {
   }).filter((x) => x.login.trim());
   return { ...c, slug: c.slug, name: fd.get("name"), url: fd.get("url"), brief: fd.get("brief"), active: fd.get("active") === "true",
     channels: chans, min_seconds: +fd.get("min_seconds"), max_seconds: +fd.get("max_seconds"), target_seconds: +fd.get("target_seconds"), clips_per_stream: +fd.get("clips_per_stream") || 5,
+    games: String(fd.get("games") || "").split(",").map((g) => g.trim()).filter(Boolean),
     required_text: String(fd.get("required_text") || "").split(/\s+/).filter(Boolean), cta: fd.get("cta"), banned: fd.get("banned"),
-    layout: fd.get("layout") || null, caption_style: fd.get("caption_style") || null, hook: fd.get("hook") === "true",
+    layout: fd.get("layout") || null, caption_style: fd.get("caption_style") || null, hook: fd.get("hook") === "true", pronoun: fd.get("pronoun") || "they",
     brand_color: fd.get("brand_color"), logo_corner: fd.get("logo_corner"), logo_scale: +fd.get("logo_scale") };
 }
 

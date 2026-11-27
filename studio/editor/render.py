@@ -31,12 +31,27 @@ def _rect(r) -> str:
     return f"crop=iw*{w:.4f}:ih*{h:.4f}:iw*{x:.4f}:ih*{y:.4f}"
 
 
+def avoid_cam(gx: float, cam, window: float, margin: float = 0.06) -> float:
+    """Slide the game window (share `window` of the source width, placed at gx) off the webcam box,
+    so the webcam isn't shown twice (once on top, once as a sliver in the game). Source-width units."""
+    x, _, w, _ = cam
+    left = gx * (1 - window)
+    if left + window <= x - margin or left >= x + w + margin or window >= 1:
+        return gx
+    if x + w / 2 >= 0.5:       # webcam on the right: put the window's right edge left of it
+        left = max(0.0, x - margin - window)
+    else:
+        left = min(1 - window, x + w + margin)
+    return left / (1 - window)
+
+
 def layout_graph(layout: str, facecam: dict | None, game_x: float = 0.5, blur_zoom: float = 1.25) -> tuple[str, dict]:
     """Filter graph from [0:v] to [lay] (1080x1920). Also returns where text fits best."""
     gx = min(max(game_x, 0.0), 1.0)
     if layout == "facecam_split" and facecam and facecam.get("cam"):
         cam_h = _even(H * CAM_SHARE)
         game_h = H - cam_h
+        gx = avoid_cam(gx, facecam["cam"], W / (game_h * 16 / 9))   # streams are 16:9
         g = (f"[0:v]split=2[a][b];"
              f"[a]{_rect(facecam['cam'])},scale={W}:{cam_h}:force_original_aspect_ratio=increase,crop={W}:{cam_h}[cam];"
              # game: full height, a 1080:game_h window, slid horizontally by game_x
