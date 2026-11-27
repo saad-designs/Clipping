@@ -34,6 +34,7 @@ API_REVISION = "2026-05-20"
 MODELS = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.6-flash"]
 LAYOUTS = ["facecam_split", "face_crop", "blur_fit", "game_only"]
 _exhausted: dict[str, float] = {}      # model -> time it ran out of free quota (skip it for a while)
+_busy: dict[str, float] = {}           # model -> time it was still overloaded after retries
 
 
 class QuotaError(RuntimeError):
@@ -131,6 +132,24 @@ def _post(body: dict, key: str, timeout: int = 300) -> dict:
         raise RuntimeError(f"HTTP {e.code}: {detail}") from None
 
 
+BUSY_WAITS = (10, 30)      # seconds to wait when a model is overloaded (HTTP 503) before trying again
+BUSY_COOLDOWN = 600        # still busy after that: skip it for 10 minutes so the next clips don't wait too
+
+
+def _post_patiently(body: dict, key: str) -> dict:
+    """Free-tier requests get turned away when a model is busy ("high demand"); that passes in
+    seconds to minutes, so wait and retry the better model before falling back to a weaker one."""
+    for wait in (*BUSY_WAITS, None):
+        try:
+            return _post(body, key)
+        except RuntimeError as e:
+            if wait is None or "HTTP 503" not in str(e):
+                raise
+            log.info("%s is busy; trying again in %ss", body["model"], wait)
+            time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
 def response_text(resp: dict) -> str:
     """The model's final text from an Interactions response (skips thought steps)."""
     if isinstance(resp.get("output_text"), str) and resp["output_text"].strip():
@@ -162,7 +181,7 @@ def ask(key: str, video: bytes, prompt: str, models: list[str] | None = None) ->
     """Run the director on the first model with quota left. Returns (decision, model)."""
     errors = []
     for model in models or MODELS:
-        if time.time() - _exhausted.get(model, 0) < 3600:
+        if time.time() - _exhausted.get(model, 0) < 3600 or time.time() - _busy.get(model, 0) < BUSY_COOLDOWN:
             continue
         body = {"model": model, "store": False, "system_instruction": SYSTEM,
                 "input": [{"type": "video", "data": base64.b64encode(video).decode(), "mime_type": "video/mp4"},
@@ -171,19 +190,21 @@ def ask(key: str, video: bytes, prompt: str, models: list[str] | None = None) ->
                 "generation_config": {"thinking_level": "high"}}
         try:
             try:
-                resp = _post(body, key)
+                resp = _post_patiently(body, key)
             except RuntimeError as e:          # an option this model doesn't take: retry with the basics
                 if "HTTP 400" not in str(e) or "API key" in str(e):
                     raise
                 log.info("%s rejected an option (%s); retrying without thinking settings", model, str(e)[:120])
                 body.pop("generation_config", None)
-                resp = _post(body, key)
+                resp = _post_patiently(body, key)
             return parse_json(response_text(resp)), model
         except QuotaError as e:
             log.warning("%s is out of free quota for now: %s", model, str(e)[:160])
             _exhausted[model] = time.time()
             errors.append(f"{model}: out of free quota")
         except Exception as e:
+            if "HTTP 503" in str(e):
+                _busy[model] = time.time()
             errors.append(f"{model}: {type(e).__name__}: {str(e)[:160]}")
             if "API key" in str(e) or "HTTP 401" in str(e) or "HTTP 403" in str(e):
                 break

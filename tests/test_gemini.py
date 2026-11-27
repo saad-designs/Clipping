@@ -56,6 +56,19 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(calls, ["m1", "m2", "m2"])          # m1 is skipped while it's out of quota
         gd._exhausted.clear()
 
+    def test_busy_model_is_retried_before_falling_back(self):
+        calls = []
+
+        def fake_post(body, key, timeout=300):
+            calls.append(body["model"])
+            if len(calls) == 1:
+                raise RuntimeError("HTTP 503: high demand")
+            return {"output_text": "{}"}
+        gd._exhausted.clear()
+        with mock.patch.object(gd, "_post", side_effect=fake_post), mock.patch.object(gd, "BUSY_WAITS", (0, 0)):
+            _, model = gd.ask("k", b"v", "p", ["m1", "m2"])
+        self.assertEqual((calls, model), (["m1", "m1"], "m1"))
+
     def test_bad_option_retries_without_thinking_settings(self):
         bodies = []
 

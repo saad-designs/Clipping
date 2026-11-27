@@ -455,7 +455,7 @@ async function renderPrefs() {
     <div id="vods-fields" ${s.find_mode === "vods" ? "" : "hidden"} style="display:flex;flex-direction:column;gap:12px">
       <p class="sub" style="margin:0">Whenever Studio is open, it checks your streamers for streams that ended, reads the chat replay and the clips viewers made, and downloads only the best moments. Clips are from finished streams, so a few hours old. Streamers who hide or delete their past streams can't be clipped this way.</p>
       <div class="row"><label>Check every <select name="sweep_hours">${[1, 2, 4, 6, 12].map((h) => `<option value="${h}" ${h == s.sweep_hours ? "selected" : ""}>${h} hour${h > 1 ? "s" : ""}</option>`).join("")}</select></label>
-        <label>First time, look back <select name="sweep_days">${[1, 2, 3, 7].map((d) => `<option value="${d}" ${d == s.sweep_days ? "selected" : ""}>${d} day${d > 1 ? "s" : ""}</option>`).join("")}</select></label></div>
+        <label>First time, look back <select name="sweep_days">${[1, 2, 3, 7, 14].map((d) => `<option value="${d}" ${d == s.sweep_days ? "selected" : ""}>${d} day${d > 1 ? "s" : ""}</option>`).join("")}</select></label></div>
     </div>
     <div id="lw-fields" ${s.find_mode === "local" ? "" : "hidden"} style="display:flex;flex-direction:column;gap:12px">
       <div class="row"><label>Twitch Client ID <input name="twitch_client_id" value="${esc(s.twitch_client_id)}" placeholder="dev.twitch.tv/console"></label>
