@@ -2,6 +2,7 @@
 REM Starts Clipping: the stream watcher and the Studio dashboard (opens in your browser).
 REM Keep this window open while you work. Close it to stop everything.
 cd /d "%~dp0.."
+set "PATH=%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
 title Clipping - keep this window open while you work
 python -m studio app
 if errorlevel 1 (

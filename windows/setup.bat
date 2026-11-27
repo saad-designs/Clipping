@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0.."
 echo.
 echo === Clipping Studio setup ===
-echo This installs Python, ffmpeg and Git (if missing), then the Studio's Python packages.
+echo This installs Python and ffmpeg (if missing), then Clipping's Python packages.
 echo.
 
 where winget >nul 2>nul
@@ -25,12 +25,9 @@ if errorlevel 1 (
   echo Installing ffmpeg...
   winget install -e --id Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
 )
-where git >nul 2>nul
-if errorlevel 1 (
-  echo Installing Git...
-  winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements
-)
 
+REM Programs winget just installed (ffmpeg) are linked here; make them usable without reopening windows.
+set "PATH=%LOCALAPPDATA%\Microsoft\WinGet\Links;%PATH%"
 REM New installs only show up in a fresh window's PATH.
 python --version >nul 2>nul
 if errorlevel 1 (
@@ -40,12 +37,11 @@ if errorlevel 1 (
   exit /b 0
 )
 
-echo Installing Studio packages (this can take a few minutes)...
-python -m pip install --upgrade pip
-python -m pip install -r requirements-studio.txt -r requirements-watcher.txt
+echo Installing Clipping's packages (a few minutes; slow connections are retried automatically)...
+python windows\install_packages.py
 if errorlevel 1 (
   echo.
-  echo Package install failed. Send the text above to Claude.
+  echo Some packages are still missing. Run setup.bat again, or send the text above to Claude.
   pause
   exit /b 1
 )
