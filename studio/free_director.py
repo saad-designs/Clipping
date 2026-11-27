@@ -195,14 +195,9 @@ def rule_plan(ctx: dict, seed: int | None = None) -> dict:
 
     strength = 0.18 if pay["strength_db"] >= 8 else 0.14 if pay["strength_db"] >= 4 else 0.11
     zooms = [{"at": round(at, 2), "strength": strength}]
-    sounds = SFX_FOR[kind]
-    sfx = [{"at": round(at - 0.05, 2), "sound": rng.choice(sounds)}]
-    if kind in ("hype", "clutch") and at - start > 3:
-        sfx.insert(0, {"at": round(at - 1.6, 2), "sound": "riser"})
-    elif kind in ("shock", "fail"):
-        sfx.insert(0, {"at": round(start, 2), "sound": "whoosh"})
-    if pay["strength_db"] >= 10:          # the audio already hits hard: don't pile sound on top
-        sfx = [s for s in sfx if s["sound"] in ("whoosh", "riser")]
+    # No sound effects from the rule-based director: it can't tell *why* a sound would fit, and a
+    # sound with no reason is noise. (The old whoosh at frame 0 of every clip was exactly that.)
+    sfx: list = []
 
     emph = []
     for w in words:

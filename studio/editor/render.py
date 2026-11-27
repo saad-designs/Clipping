@@ -20,6 +20,24 @@ W, H = 1080, 1920
 SFX_DIR = Path(__file__).resolve().parent.parent / "assets" / "sfx"
 SFX = {p.stem for p in SFX_DIR.glob("*.wav")}
 CAM_SHARE = 0.38          # facecam_split: top part of the frame for the webcam
+SFX_LEVEL = 0.6           # sounds sit under the voice (the files peak near full scale)
+TARGET_LUFS = -14.0
+
+
+def stream_gain(src: Path, start: float, dur: float) -> float:
+    """dB to bring this part of the stream to -14 LUFS. Capped so near-silent clips aren't blown up into hiss."""
+    import json
+    import re
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-nostdin", "-ss", f"{start:.2f}", "-t", f"{dur:.2f}", "-i", str(src),
+                        "-vn", "-af", "loudnorm=print_format=json", "-f", "null", "-"], capture_output=True, text=True)
+    m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", r.stderr)
+    try:
+        measured = float(json.loads(m.group(0))["input_i"]) if m else None
+    except (ValueError, KeyError):
+        measured = None
+    if measured is None or measured < -70:     # silence / no audio: leave it alone
+        return 0.0
+    return max(-20.0, min(24.0, TARGET_LUFS - measured))
 
 
 def _even(n: float) -> int:
@@ -144,18 +162,23 @@ def render(src: Path, plan: dict, out: Path, campaign: dict | None = None, words
 
         has_audio = _has_audio(src)
         if has_audio:
-            mix = ["[0:a]aresample=48000,volume=1.0[a0]"]
+            # One steady gain to -14 LUFS (measured first), not loudnorm's dynamic mode: on a quiet
+            # stream that pumped the background hiss up in every pause. Sounds go in *after* the
+            # stream is levelled, under the voice, then a limiter catches peaks.
+            gain = stream_gain(src, start, dur)
+            mix = [f"[0:a]aresample=48000,highpass=f=60,volume={gain:.2f}dB[a0]"]
             labels = ["[a0]"]
             for idx, at, vol, _ in sfx_inputs:
                 ms = int(at * 1000)
-                mix.append(f"[{idx}:a]aresample=48000,volume={vol:.2f},adelay={ms}|{ms}[s{idx}]")
+                mix.append(f"[{idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={min(vol, 0.5) * SFX_LEVEL:.3f},"
+                           f"adelay={ms}|{ms}[s{idx}]")
                 labels.append(f"[s{idx}]")
             if len(labels) > 1:
                 mix.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:normalize=0[am]")
                 src_a = "[am]"
             else:
                 src_a = "[a0]"
-            mix.append(f"{src_a}loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[a]")
+            mix.append(f"{src_a}alimiter=limit=0.84:level=disabled,aresample=48000[a]")
             graph += ";" + ";".join(mix)
 
         cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *inputs, "-filter_complex", graph,
