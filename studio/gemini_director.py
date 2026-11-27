@@ -41,6 +41,19 @@ class QuotaError(RuntimeError):
     pass
 
 
+class DirectorWait(RuntimeError):
+    """Every model is busy or out of today's free quota. Temporary: the clip should wait, not be
+    handed to the rules director. `retry_at` is when the first model should be usable again."""
+
+    def __init__(self, msg: str, retry_at: float):
+        super().__init__(msg)
+        self.retry_at = retry_at
+
+
+def _available_at(model: str) -> float:
+    return max(_exhausted.get(model, 0) + 3600, _busy.get(model, 0) + BUSY_COOLDOWN)
+
+
 SCHEMA = {
     "type": "object",
     "required": ["watched", "speech", "verdict", "story", "keep", "layout", "layout_why", "zooms", "hook",
@@ -179,9 +192,10 @@ def parse_json(text: str) -> dict:
 
 def ask(key: str, video: bytes, prompt: str, models: list[str] | None = None) -> tuple[dict, str]:
     """Run the director on the first model with quota left. Returns (decision, model)."""
-    errors = []
-    for model in models or MODELS:
-        if time.time() - _exhausted.get(model, 0) < 3600 or time.time() - _busy.get(model, 0) < BUSY_COOLDOWN:
+    errors, hard_error = [], False
+    models = models or MODELS
+    for model in models:
+        if time.time() < _available_at(model):
             continue
         body = {"model": model, "store": False, "system_instruction": SYSTEM,
                 "input": [{"type": "video", "data": base64.b64encode(video).decode(), "mime_type": "video/mp4"},
@@ -205,10 +219,17 @@ def ask(key: str, video: bytes, prompt: str, models: list[str] | None = None) ->
         except Exception as e:
             if "HTTP 503" in str(e):
                 _busy[model] = time.time()
+                errors.append(f"{model}: busy")
+                continue
+            hard_error = True
             errors.append(f"{model}: {type(e).__name__}: {str(e)[:160]}")
             if "API key" in str(e) or "HTTP 401" in str(e) or "HTTP 403" in str(e):
                 break
-    raise RuntimeError("; ".join(errors) or "every model is out of free quota for now")
+    if not hard_error:
+        retry_at = min(_available_at(m) for m in models)
+        raise DirectorWait("Gemini is busy or out of today's free quota" + (f" ({'; '.join(errors)})" if errors else ""),
+                           retry_at)
+    raise RuntimeError("; ".join(errors))
 
 
 # ----------------------------------------------------------------------------- prompt + conversion

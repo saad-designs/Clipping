@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from studio import director
+from studio import director, gemini_director
 from studio.client import Client, ServerError
 from studio.editor import facecam as facecam_mod
 from studio.editor import render as render_mod
@@ -45,6 +45,7 @@ class Worker:
         self._thread: threading.Thread | None = None
         self.last_sweep: dict = {}
         self._sweep_now = False
+        self.director_wait_until = 0.0  # Gemini busy / out of quota: hold editing until then
 
     # ---- control --------------------------------------------------------------
     def start(self) -> None:
@@ -81,6 +82,12 @@ class Worker:
                 self._run_job(self.jobs.pop(0))
                 continue
             clip = self.store.next_queued()
+            if clip and time.time() < self.director_wait_until and s.get("director") == "gemini":
+                self.status = "waiting for Gemini (busy or out of today's free quota) until " \
+                              + time.strftime("%H:%M", time.localtime(self.director_wait_until))
+                self._wake.wait(timeout=min(30, max(1, self.director_wait_until - time.time())))
+                self._wake.clear()
+                continue
             if clip:
                 self.process(clip)
                 continue
@@ -202,7 +209,13 @@ class Worker:
                 ctx = director.build_context({**meta, "channel": clip["channel"]}, camp, word_objs, fc, duration,
                                              self.store.recent_styles(camp["name"]), clip["notes"], clip["plan"],
                                              meta.get("loudness"), meta.get("language"), self.store.recent_hooks(camp["name"]))
-                plan = director.plan(ctx, src, s)
+                try:
+                    plan = director.plan(ctx, src, s)
+                except gemini_director.DirectorWait as e:
+                    self.director_wait_until = e.retry_at
+                    self.store.update_clip(cid, status="queued", error=f"Waiting for the director: {str(e)[:200]}")
+                    log.info("clip #%s waits for Gemini until %s", cid, time.strftime("%H:%M", time.localtime(e.retry_at)))
+                    return
 
             if plan.get("skip") and str(plan.get("source", "")).startswith("gemini") and not clip["notes"] \
                     and not clip["lock_plan"]:

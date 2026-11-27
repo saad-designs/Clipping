@@ -69,6 +69,18 @@ class ParsingTests(unittest.TestCase):
             _, model = gd.ask("k", b"v", "p", ["m1", "m2"])
         self.assertEqual((calls, model), (["m1", "m1"], "m1"))
 
+    def test_all_busy_means_wait_not_rules(self):
+        gd._exhausted.clear(); gd._busy.clear()
+        with mock.patch.object(gd, "_post", side_effect=RuntimeError("HTTP 503: high demand")), \
+                mock.patch.object(gd, "BUSY_WAITS", (0, 0)):
+            with self.assertRaises(gd.DirectorWait) as w:
+                gd.ask("k", b"v", "p", ["m1", "m2"])
+            self.assertGreater(w.exception.retry_at, __import__("time").time() + 500)
+            with mock.patch.object(gd, "plan_raw", side_effect=gd.DirectorWait("busy", 0)), \
+                    self.assertRaises(gd.DirectorWait):          # the director doesn't swap in the rules
+                director.plan({**ctx(), "words": []}, Path("x.mp4"), {"director": "gemini", "gemini_api_key": "k"})
+        gd._exhausted.clear(); gd._busy.clear()
+
     def test_bad_option_retries_without_thinking_settings(self):
         bodies = []
 

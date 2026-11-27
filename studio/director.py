@@ -357,9 +357,11 @@ def plan(ctx: dict, clip_path, settings: dict) -> dict:
         if not settings.get("gemini_api_key"):
             note = "Gemini director picked but no key in Settings; used the free director."
         else:
+            from studio import gemini_director
             try:
-                from studio import gemini_director
                 raw = gemini_director.plan_raw(ctx, clip_path, settings["gemini_api_key"])
+            except gemini_director.DirectorWait:
+                raise          # temporary: the worker re-queues the clip instead of using the rules director
             except Exception as e:
                 note = f"Gemini director unavailable ({type(e).__name__}: {str(e)[:200]}); used the free director."
                 log.warning(note)
