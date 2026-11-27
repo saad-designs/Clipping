@@ -44,13 +44,22 @@ def cmd_check(cfg, _args) -> None:
           else "not installed: pip install faster-whisper (clips will have no captions)")
     print("output:   ", cfg["output_dir"].resolve())
     server_url, token = cfg["server_url"], cfg["token"]
+    find_mode = "vods"
     data = Path("studio_data")
     if (data / "studio.db").exists():          # the dashboard's settings win over studio.yaml
         from studio.store import Store
         st = Store(data).settings()
         server_url, token = st.get("server_url") or server_url, st.get("token") or token
-        print("director: ", "AI (key set)" if st.get("anthropic_api_key") else "rule-based (add an Anthropic key in Settings)")
+        find_mode = st.get("find_mode") or "vods"
+        if st.get("director") == "claude":
+            print("director: ", "Claude (key set)" if st.get("anthropic_api_key") else "Claude picked but NO KEY: add it in Settings")
+        else:
+            print("director: ", "free (built-in)")
         print("campaigns:", ", ".join(c["name"] for c in Store(data).campaigns()) or "none yet")
+    print("finding:  ", {"vods": "finished streams (no server needed)", "local": "live, on this PC",
+                         "server": "live, on your server"}.get(find_mode, find_mode))
+    if find_mode == "vods":
+        return
     try:
         camps = Client(server_url, token).get("/api/campaigns")
         print("server:   ", f"ok, {len(camps)} campaigns: {', '.join(c['name'] for c in camps)}")
