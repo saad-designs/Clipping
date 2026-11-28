@@ -32,6 +32,7 @@ log = logging.getLogger("sweep")
 
 GQL = "https://gql.twitch.tv/gql"
 PRE, POST = 35, 25          # seconds kept around each moment (the director trims later)
+VIEWER_CLIP_MIN_VIEWS = 20  # a viewer clip this popular gets judged even if the scout passed over it
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36"}
 
 
@@ -256,6 +257,18 @@ def scout_moments(store, key: str, ch: dict, camp: dict, v: dict, clips: list, t
     found = scan.scan_vod(store, key, v, ranges, camp, ch["login"], chat, clips, on_status)
     good = sorted((m for m in found if m["score"] >= scan.MIN_SCORE), key=lambda m: -m["score"])[:top]
     log.info("scout found %d moments in %s (%d good enough)", len(found), v["id"], len(good))
+    # Safety net: the clips viewers made most are real evidence. If the scout passed over one,
+    # still hand it to the editing director, which watches it properly and can turn it down.
+    vc = sorted((c for c in clips if (c.get("video") or {}).get("id") == v["id"] and c.get("videoOffsetSeconds") is not None
+                 and int(c.get("viewCount") or 0) >= VIEWER_CLIP_MIN_VIEWS), key=lambda c: -int(c.get("viewCount") or 0))
+    for c in vc[:2]:
+        at = float(c["videoOffsetSeconds"]) + float(c.get("durationSeconds") or 30) * 0.6
+        inside = ranges is None or any(a <= at <= b for a, b in ranges)
+        if inside and all(abs(at - m["at"]) > 45 for m in good):
+            good.append({"start": float(c["videoOffsetSeconds"]), "at": at,
+                         "end": float(c["videoOffsetSeconds"]) + float(c.get("durationSeconds") or 30),
+                         "score": scan.MIN_SCORE, "what": f"viewers clipped this ({c.get('viewCount')} views); the scout didn't pick it",
+                         "why": "viewer clip"})
     out = []
     for m in sorted(good, key=lambda m: m["at"]):
         n = sum(1 for c in clips if (c.get("video") or {}).get("id") == v["id"]

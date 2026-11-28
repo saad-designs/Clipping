@@ -36,9 +36,9 @@ SCAN_SCHEMA = {
         "moments": {"type": "array", "description": "every moment in this video that could be a great Short; empty if none",
                     "items": {"type": "object", "required": ["start", "peak", "end", "what", "why", "score"],
                               "properties": {
-                                  "start": {"type": "number", "description": "seconds from the start of THIS video where the setup begins"},
-                                  "peak": {"type": "number", "description": "seconds: the payoff / biggest reaction"},
-                                  "end": {"type": "number", "description": "seconds: when the reaction has landed"},
+                                  "start": {"type": "string", "description": "MM:SS from the start of THIS video where the setup begins, e.g. \"07:42\""},
+                                  "peak": {"type": "string", "description": "MM:SS of the payoff / biggest reaction"},
+                                  "end": {"type": "string", "description": "MM:SS when the reaction has landed"},
                                   "what": {"type": "string", "description": "what happens, concretely"},
                                   "why": {"type": "string", "description": "why a stranger scrolling would stop and watch to the end"},
                                   "score": {"type": "integer", "description": "1-10, strict: 5 = fine, 7 = good Short, 9+ = could go viral"},
@@ -55,7 +55,7 @@ What makes a moment worth clipping (from strongest):
 - a short self-contained story: setup -> payoff -> reaction, understandable without context
 NOT worth clipping: ordinary gameplay, driving around, menus, loading, cutscenes the streamer watches quietly, mumbling, reading chat with no punchline, moments that need context to be funny.
 
-Be strict. Most minutes of a stream have nothing. It's fine to return no moments. Only list a moment you'd stake your channel on; score honestly (5 = okay, 7 = good, 9+ = rare). Times are seconds from the start of the video you're given. A good Short moment is usually 15-60 seconds from setup to landed reaction. Follow the campaign brief (it says what content counts)."""
+Be strict. Most minutes of a stream have nothing. It's fine to return no moments. Only list a moment you'd stake your channel on; score honestly (5 = okay, 7 = good, 9+ = rare). Times are seconds from the start of the video you're given. A good Short moment is usually 15-60 seconds from setup to landed reaction. Write every time as MM:SS from the start of this video (e.g. "07:42"), never as minutes with a decimal point. Follow the campaign brief (it says what content counts)."""
 
 
 def low_url(page_url: str) -> str:
@@ -135,12 +135,27 @@ def scan_vod(store, key: str, v: dict, ranges: list[tuple[float, float]], campai
         piece = cache[k]
         for m in piece["moments"]:
             try:
-                off = float(piece["offset"])
-                found.append({"start": off + float(m["start"]), "at": off + float(m["peak"]), "end": off + float(m["end"]),
+                off, length = float(piece["offset"]), b - a
+                s, p, e = (mmss(m[k]) for k in ("start", "peak", "end"))
+                if not (0 <= s <= p <= e <= length + 5) or e - s < 3:     # e.g. "19.4" meaning 19 min 40
+                    log.info("dropping a moment with impossible times: %s", {k: m.get(k) for k in ("start", "peak", "end")})
+                    continue
+                found.append({"start": off + s, "at": off + p, "end": off + e,
                               "score": int(m["score"]), "what": m.get("what", ""), "why": m.get("why", "")})
             except (KeyError, TypeError, ValueError):
                 continue
     return dedupe(found)
+
+
+def mmss(v) -> float:
+    """'07:42' / '1:02:03' -> seconds. Numbers are taken as seconds."""
+    if isinstance(v, (int, float)):
+        return float(v)
+    parts = [float(x) for x in str(v).strip().split(":")]
+    sec = 0.0
+    for x in parts:
+        sec = sec * 60 + x
+    return sec
 
 
 def dedupe(moments: list[dict]) -> list[dict]:

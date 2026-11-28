@@ -16,6 +16,11 @@ class PieceTests(unittest.TestCase):
         self.assertGreaterEqual(p[-1][1], 3000.0)
         self.assertEqual(scan.chunks([(100.0, 110.0)]), [])          # too short to bother
 
+    def test_times_are_read_as_mm_ss(self):
+        self.assertEqual(scan.mmss("07:42"), 462)
+        self.assertEqual(scan.mmss("1:02:03"), 3723)
+        self.assertEqual(scan.mmss(12.5), 12.5)
+
     def test_duplicates_from_overlap_keep_the_best(self):
         m = scan.dedupe([{"at": 100, "score": 6}, {"at": 110, "score": 8}, {"at": 500, "score": 7}])
         self.assertEqual([(x["at"], x["score"]) for x in m], [(110, 8), (500, 7)])
@@ -47,7 +52,8 @@ class ScanVodTests(unittest.TestCase):
 
             def fake_piece(key, video, camp, streamer, hint):
                 calls.append(1)
-                return {"summary": "s", "moments": [{"start": 10, "peak": 20, "end": 30, "what": "w", "why": "y", "score": 8}],
+                return {"summary": "s", "moments": [{"start": "00:10", "peak": "00:20", "end": "00:30", "what": "w", "why": "y", "score": 8},
+                                                    {"start": 19.12, "peak": 19.4, "end": 19.5, "what": "minutes as decimals", "why": "", "score": 9}],
                         "_model": "m"}
 
             def fake_section(url, a, b, out):
@@ -60,7 +66,7 @@ class ScanVodTests(unittest.TestCase):
                 found = scan.scan_vod(st, "k", v, [(0.0, 1500.0)], {}, "x", [], [])
                 again = scan.scan_vod(st, "k", v, [(0.0, 1500.0)], {}, "x", [], [])
             self.assertEqual(len(calls), 2)                     # 2 pieces, second run fully from cache
-            self.assertEqual([m["at"] for m in found], [20.0, 1175.0])
+            self.assertEqual([m["at"] for m in found], [20.0, 1175.0])   # the 0.4 s "moment" is dropped
             self.assertEqual(found, again)
 
     def test_sweep_uses_the_scout_when_gemini_is_on(self):
@@ -77,15 +83,19 @@ class ScanVodTests(unittest.TestCase):
                 out.parent.mkdir(parents=True, exist_ok=True)
                 out.write_bytes(b"x")
                 return start
-            with mock.patch.object(sweep, "twitch_vods", return_value=(vods, [])), \
+            viewer = [{"video": {"id": "77"}, "videoOffsetSeconds": 3000, "durationSeconds": 30, "viewCount": 197},
+                      {"video": {"id": "77"}, "videoOffsetSeconds": 905, "durationSeconds": 30, "viewCount": 50}]
+            with mock.patch.object(sweep, "twitch_vods", return_value=(vods, viewer)), \
                     mock.patch.object(sweep.vod, "twitch_chat", return_value=[]), \
                     mock.patch.object(scan, "scan_vod", return_value=found), \
                     mock.patch.object(sweep, "media_url", return_value="m3u8"), \
                     mock.patch.object(sweep, "hls_section", side_effect=fake_section):
                 r = sweep.sweep(st)
-            self.assertEqual((r["new_clips"], r["errors"]), (1, []))
-            c = st.clips()[0]
+            # the scout's best, plus the popular viewer clip it passed over (the other one is already covered)
+            self.assertEqual((r["new_clips"], r["errors"]), (2, []))
+            c = sorted(st.clips(), key=lambda c: c["meta"]["vod_time"])[0]
             self.assertEqual(c["meta"]["vod_time"], 915)                   # the best one, not the first
+            self.assertEqual(c["meta"]["viewer_clips"], 1)
             self.assertEqual(c["meta"]["scout"]["what"], "she falls in")
             self.assertEqual(c["meta"]["scout"]["peak"], c["meta"]["moment_offset"])
 
