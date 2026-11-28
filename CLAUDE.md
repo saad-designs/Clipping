@@ -221,7 +221,7 @@ Start it with `python -m studio app` or `windows\Start Clipping.bat`. Pages:
 - Hooks said "HE" for a female streamer → campaign `pronoun` (she/he/they). Post titles "Didn'T" → fixed.
 - Game crop showed a webcam sliver → `render.avoid_cam`.
 - Tests: 18 failed only on Windows temp-folder cleanup (open SQLite) → `tests/conftest.py`. `test_recorder` timing test still fails on Windows (live mode only).
-- **Open:** webcam detection sometimes boxes only part of the overlay (stream 2 of Lauren: real overlay x 0.68-0.98, detected 0.84-1.0), so the top panel is cropped and the game panel shows the overlay edge.
+- Webcam box was a guess from the face size (often too tight; on a two-person cam it cut Lauren out). `facecam.find_overlay` now finds the real overlay border: long unbroken lines in the per-clip median edge map, each confirmed by "game moves outside, room still inside" (rejects headboards/shelves). A side with no line runs to the frame edge. If a clip can't find it, `Worker._overlay_from_same_stream` borrows the overlay of the nearest-in-time clip of the same stream that contains the face (streamers move overlays mid-stream: Lauren did). 10/11 found directly on her clips, 1 borrowed.
 
 ## 10. Next steps (for this local session)
 1. **Update the folder** to the latest `ccr-8c9d8d98-0303s9`.

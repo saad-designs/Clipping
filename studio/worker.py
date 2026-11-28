@@ -249,7 +249,35 @@ class Worker:
         if setting == "none":
             return {"kind": "none", "source": "manual"}
         self.status = "finding the webcam"
-        return {**facecam_mod.detect(src).to_dict(), "source": "auto"}
+        found = {**facecam_mod.detect(src).to_dict(), "source": "auto"}
+        if found.get("kind") == "webcam" and not found.get("overlay"):
+            borrowed = self._overlay_from_same_stream(src, channel, found)
+            if borrowed:
+                found.update(cam=borrowed, overlay=True, notes=["overlay borrowed from another clip of this stream"])
+        return found
+
+    def _overlay_from_same_stream(self, src: Path, channel: str, found: dict) -> list | None:
+        """A streamer's overlay stays put within a stream (until they move it): reuse the border
+        another clip of the same stream found, if the face seen here sits inside it. The nearest
+        clip in time wins (overlays get moved mid-stream)."""
+        vod, _, sec = src.stem.rpartition("_")         # twitch_<vodid>_<seconds>
+        cx, cy = found["face"][0] + found["face"][2] / 2, found["face"][1] + found["face"][3] / 2
+        best, best_dt = None, None
+        for c in self.store.clips():
+            fc = c.get("facecam") or {}
+            name = Path(c["src_path"]).stem
+            if c["channel"] != channel or not fc.get("overlay") or not name.startswith(vod + "_"):
+                continue
+            x, y, w, h = fc["cam"]
+            if not (x <= cx <= x + w and y <= cy <= y + h):
+                continue
+            try:
+                dt = abs(float(name.rpartition("_")[2]) - float(sec))
+            except ValueError:
+                dt = 1e9
+            if best_dt is None or dt < best_dt:
+                best, best_dt = fc["cam"], dt
+        return best
 
     # ---- review actions ---------------------------------------------------------
     def approve(self, cid: int) -> dict:
