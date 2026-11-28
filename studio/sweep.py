@@ -332,9 +332,12 @@ def sweep(store, max_age_days: float = 3.0, on_status=lambda s: None) -> dict:
                         with tempfile.TemporaryDirectory() as tmp:
                             moments, chat = pick_moments(ch["platform"], v, clips, top, Path(tmp), allowed)
                     m3u8 = (v.get("m3u8") or media_url(v["url"])) if moments else None
+                    have = {Path(c["src_path"]).name for c in store.clips() if c["campaign"] == camp["name"]}
                     for i, m in enumerate(moments, 1):
-                        on_status(f"downloading moment {i}/{len(moments)} from {key}")
                         out = clips_dir / f"{ch['platform']}_{v['id']}_{int(m['at'])}.mp4"
+                        if out.name in have:      # an interrupted run already got this one
+                            continue
+                        on_status(f"downloading moment {i}/{len(moments)} from {key}")
                         start, stop = window(m)
                         if ch["platform"] == "youtube":   # DASH, not HLS: let yt-dlp cut it
                             real_start = _ytdlp_section(v["url"], start, stop, out)

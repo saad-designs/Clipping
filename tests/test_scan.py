@@ -93,6 +93,17 @@ class ScanVodTests(unittest.TestCase):
                 r = sweep.sweep(st)
             # the scout's best, plus the popular viewer clip it passed over (the other one is already covered)
             self.assertEqual((r["new_clips"], r["errors"]), (2, []))
+            with st.lock:                       # an interrupted run: the stream isn't marked done yet
+                st.db.execute("DELETE FROM seen_vods")
+                st.db.execute("DELETE FROM sweeps")
+                st.db.commit()
+            with mock.patch.object(sweep, "twitch_vods", return_value=(vods, viewer)), \
+                    mock.patch.object(sweep.vod, "twitch_chat", return_value=[]), \
+                    mock.patch.object(scan, "scan_vod", return_value=found), \
+                    mock.patch.object(sweep, "media_url", return_value="m3u8"), \
+                    mock.patch.object(sweep, "hls_section", side_effect=fake_section):
+                self.assertEqual(sweep.sweep(st)["new_clips"], 0)       # nothing added twice
+            self.assertEqual(len(st.clips()), 2)
             c = sorted(st.clips(), key=lambda c: c["meta"]["vod_time"])[0]
             self.assertEqual(c["meta"]["vod_time"], 915)                   # the best one, not the first
             self.assertEqual(c["meta"]["viewer_clips"], 1)
