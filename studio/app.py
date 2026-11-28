@@ -17,10 +17,11 @@ import webbrowser
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 
+from studio.auth import Auth
 from studio.client import Client, ServerError
 from studio.editor.facecam import sample_frames
 from studio.store import Store
@@ -32,6 +33,15 @@ WEB = Path(__file__).parent / "web" / "index.html"
 
 class ReEdit(BaseModel):
     notes: str
+
+
+class Login(BaseModel):
+    password: str
+
+
+class NewPassword(BaseModel):
+    password: str
+    sign_out_others: bool = False
 
 
 class PlanEdit(BaseModel):
@@ -75,7 +85,23 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
             local.restart()
 
     app = FastAPI(title="Clipping Studio", docs_url=None, redoc_url=None, lifespan=lifespan)
-    app.state.store, app.state.worker = store, worker
+    auth = Auth(store)
+    app.state.store, app.state.worker, app.state.auth = store, worker, auth
+
+    cors = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Authorization, Content-Type",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS", "Access-Control-Max-Age": "600"}
+
+    @app.middleware("http")
+    async def require_login(request: Request, call_next):
+        """Every /api call needs a login (or a signed media link). CORS is open: the login is a
+        bearer token, never a cookie, so other sites can't act as you."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors)
+        if not auth.allowed(request.url.path, dict(request.query_params), {k.lower(): v for k, v in request.headers.items()}):
+            return JSONResponse({"detail": "login needed"}, status_code=401, headers=cors)
+        resp = await call_next(request)
+        resp.headers.update(cors)
+        return resp
 
     def get_clip(cid: int) -> dict:
         c = store.clip(cid)
@@ -85,7 +111,45 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
 
     @app.get("/", response_class=HTMLResponse)
     def index():
-        return HTMLResponse(WEB.read_text(encoding="utf-8"))
+        # served by Studio itself: the page talks to this same address
+        html = WEB.read_text(encoding="utf-8")
+        return HTMLResponse(html.replace("<head>", "<head><script>window.STUDIO_SAME_ORIGIN = true</script>", 1))
+
+    # ---- login ------------------------------------------------------------------
+    @app.get("/api/ping")
+    def ping():
+        return {"app": "clipping-studio", "ok": True, "password_set": auth.password_set()}
+
+    @app.post("/api/login")
+    def login(body: Login):
+        try:
+            return {"token": auth.login(body.password)}
+        except PermissionError as e:
+            raise HTTPException(429 if "too many" in str(e) else 401, str(e))
+
+    @app.post("/api/logout")
+    def logout(request: Request):
+        auth.revoke(request.headers.get("authorization", "")[7:].strip())
+        return {"ok": True}
+
+    @app.get("/api/auth")
+    def auth_state():
+        return {"password_set": auth.password_set()}
+
+    @app.post("/api/password")
+    def set_password(body: NewPassword, request: Request):
+        try:
+            auth.set_password(body.password)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if body.sign_out_others:
+            auth.revoke_all()
+            return {"ok": True, "token": auth.new_token("login")}     # keep this browser signed in
+        return {"ok": True}
+
+    @app.get("/api/frame-url")
+    def frame_url(slug: str, channel: str):
+        return {"url": auth.sign(f"/api/campaigns/{slug}/frame", channel)}
 
     # ---- status / settings ------------------------------------------------------
     @app.get("/api/state")
@@ -165,7 +229,11 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
     # ---- campaigns --------------------------------------------------------------
     @app.get("/api/campaigns")
     def campaigns():
-        return store.campaigns()
+        out = store.campaigns()
+        for c in out:
+            if c.get("logo_path"):
+                c["logo_url"] = auth.sign(f"/api/campaigns/{c['slug']}/asset/logo")
+        return out
 
     @app.post("/api/campaigns")
     def save_campaign(data: dict):
@@ -252,14 +320,18 @@ def create_app(store: Store, worker: Worker | None = None, start_worker: bool = 
         for c in store.clips(status):
             c.pop("words", None)
             c["has_video"] = bool(c.get("out_path")) and Path(c["out_path"]).exists()
+            if c["has_video"]:
+                c["video_url"] = auth.sign(f"/api/clips/{c['id']}/video")
             out.append(c)
         return out
 
     @app.get("/api/clips/{cid}/video")
-    def clip_video(cid: int):
+    def clip_video(cid: int, dl: int = 0):
         c = get_clip(cid)
         if not c.get("out_path") or not Path(c["out_path"]).exists():
             raise HTTPException(404, "not rendered yet")
+        if dl:      # "Download": save it with its own name instead of playing it
+            return FileResponse(c["out_path"], media_type="video/mp4", filename=Path(c["out_path"]).name)
         return FileResponse(c["out_path"], media_type="video/mp4")
 
     @app.get("/api/clips/{cid}/source")
@@ -396,10 +468,17 @@ def main(root: str = "studio_data", port: int = 8790, open_browser: bool = True)
     if keep_awake(True):
         print("  This PC won't go to sleep while Studio is open (the screen can still turn off).")
     url = f"http://localhost:{port}"
-    print(f"\n  Clipping Studio is running: {url}\n  Keep this window open. Close it to stop.\n")
+    app = create_app(store, local=local)
+    # this PC's browser signs in through a one-time link (the token sits after '#', so it never
+    # reaches a server log); everyone else needs the dashboard password
+    link = f"{url}/#login={app.state.auth.new_token('this PC')}"
+    print(f"\n  Clipping Studio is running: {url}\n  Keep this window open. Close it to stop.\n"
+          f"  Signed-in link for this PC's browser:\n  {link}\n")
+    if not app.state.auth.password_set():
+        print("  To use the dashboard from your phone or the web, set a password in Settings.\n")
     if open_browser:
-        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-    uvicorn.run(create_app(store, local=local), host="127.0.0.1", port=port, log_level="warning")
+        threading.Timer(1.5, lambda: webbrowser.open(link)).start()
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 
 def _import_yaml_settings(store: Store) -> None:

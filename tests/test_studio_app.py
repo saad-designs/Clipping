@@ -104,10 +104,34 @@ class DashboardTests(unittest.TestCase):
         self.store = Store(self.root / "studio_data")
         self.store.save_settings({"output_dir": str(self.root / "Campaigns"), "encoder": "libx264"})
         self.worker = Worker(self.store)
-        self.client = TestClient(create_app(self.store, self.worker, start_worker=False))
+        app = create_app(self.store, self.worker, start_worker=False)
+        self.client = TestClient(app)
+        self.client.headers["Authorization"] = "Bearer " + app.state.auth.new_token("test")
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_login_is_required_from_anywhere(self):
+        anon = TestClient(self.client.app)
+        self.assertEqual(anon.get("/api/clips").status_code, 401)
+        self.assertEqual(anon.get("/api/ping").status_code, 200)
+        self.assertEqual(anon.post("/api/login", json={"password": "x"}).status_code, 401)     # none set yet
+        self.assertEqual(self.client.post("/api/password", json={"password": "short"}).status_code, 400)
+        self.client.post("/api/password", json={"password": "correct horse battery"})
+        self.assertEqual(anon.post("/api/login", json={"password": "wrong password!"}).status_code, 401)
+        token = anon.post("/api/login", json={"password": "correct horse battery"}).json()["token"]
+        self.assertEqual(anon.get("/api/clips", headers={"Authorization": f"Bearer {token}"}).status_code, 200)
+        r = anon.options("/api/clips", headers={"Origin": "https://x.vercel.app", "Access-Control-Request-Method": "GET"})
+        self.assertEqual(r.headers["access-control-allow-origin"], "*")
+        anon.post("/api/logout", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(anon.get("/api/clips", headers={"Authorization": f"Bearer {token}"}).status_code, 401)
+
+    def test_wrong_passwords_lock_the_login(self):
+        anon = TestClient(self.client.app)
+        self.client.post("/api/password", json={"password": "correct horse battery"})
+        for _ in range(5):
+            anon.post("/api/login", json={"password": "nope nope nope"})
+        self.assertEqual(anon.post("/api/login", json={"password": "correct horse battery"}).status_code, 429)
 
     def test_settings_mask_secrets(self):
         self.client.put("/api/settings", json={"anthropic_api_key": "sk-ant-api03-abcdefghijklmnop", "token": "t" * 20})
@@ -138,6 +162,15 @@ class DashboardTests(unittest.TestCase):
         self.assertLessEqual(clip["plan"]["keep"][1] - clip["plan"]["keep"][0], 8)
         self.assertIn("#ad", clip["plan"]["post"]["hashtags"])
         self.assertEqual(self.client.get(f"/api/clips/{cid}/video").status_code, 200)
+        # <video> tags can't send the login: the signed link works on its own, a forged one doesn't
+        anon = TestClient(self.client.app)
+        self.assertEqual(anon.get(clip["video_url"]).status_code, 200)
+        r = anon.get(clip["video_url"] + "&dl=1")
+        self.assertIn("attachment", r.headers["content-disposition"])
+        self.assertEqual(anon.get(f"/api/clips/{cid}/video?sig=9999999999.deadbeef").status_code, 401)
+        self.assertEqual(anon.get(clip["video_url"].replace(f"/clips/{cid}/", f"/clips/{cid + 1}/")).status_code, 401)
+        camp = self.client.get("/api/campaigns").json()[0]
+        self.assertEqual(anon.get(camp["logo_url"]).status_code, 200)
 
         # change the hook -> re-render with exactly that plan (no director)
         self.client.post(f"/api/clips/{cid}/edit", json={"hook_text": "MY OWN HOOK"})
