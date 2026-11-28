@@ -31,7 +31,9 @@ log = logging.getLogger("gemini")
 
 API = "https://generativelanguage.googleapis.com/v1beta/interactions"
 API_REVISION = "2026-05-20"
-MODELS = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.6-flash"]
+# Best first. Free tier: each model has its own daily request limit (20/day for the top ones),
+# so the chain is also how a busy day gets more requests in.
+MODELS = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
 LAYOUTS = ["facecam_split", "face_crop", "blur_fit", "game_only"]
 _exhausted: dict[str, float] = {}      # model -> time it ran out of free quota (skip it for a while)
 _busy: dict[str, float] = {}           # model -> time it was still overloaded after retries
@@ -48,6 +50,17 @@ class DirectorWait(RuntimeError):
     def __init__(self, msg: str, retry_at: float):
         super().__init__(msg)
         self.retry_at = retry_at
+
+
+def retry_after(msg: str) -> float:
+    """Seconds from Google's 'Please retry in 21h22m40s' (an hour if it doesn't say)."""
+    m = re.search(r"retry in\s+((?:\d+h)?(?:\d+m)?(?:[\d.]+s)?)", msg)
+    if not m or not m.group(1):
+        return 3600.0
+    total = 0.0
+    for n, unit in re.findall(r"([\d.]+)([hms])", m.group(1)):
+        total += float(n) * {"h": 3600, "m": 60, "s": 1}[unit]
+    return total or 3600.0
 
 
 def _is_network(e: Exception) -> bool:
@@ -222,7 +235,7 @@ def ask(key: str, video: bytes, prompt: str, models: list[str] | None = None,
             return parse_json(response_text(resp)), model
         except QuotaError as e:
             log.warning("%s is out of free quota for now: %s", model, str(e)[:160])
-            _exhausted[model] = time.time()
+            _exhausted[model] = time.time() + max(0.0, retry_after(str(e)) - 3600)   # skipped until Google says
             errors.append(f"{model}: out of free quota")
         except Exception as e:
             if "HTTP 503" in str(e) or "HTTP 500" in str(e) or _is_network(e):

@@ -85,6 +85,11 @@ class ParsingTests(unittest.TestCase):
                 gd.ask("k", b"v", "p", ["m1"])
         gd._exhausted.clear(); gd._busy.clear()
 
+    def test_quota_message_sets_how_long_to_skip(self):
+        self.assertEqual(gd.retry_after("limit: 20 requests per day. Please retry in 21h22m40s or upgrade"), 76960)
+        self.assertEqual(gd.retry_after("Please retry in 37.5s"), 37.5)
+        self.assertEqual(gd.retry_after("no hint"), 3600)
+
     def test_bad_option_retries_without_thinking_settings(self):
         bodies = []
 
