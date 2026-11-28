@@ -71,6 +71,9 @@ How the `vods` sweep works (`studio/sweep.py`):
 
 ---
 
+### The scout (Gemini on): the director picks the moments itself
+Chat spikes don't work for small streamers (Lauren: ~7 msgs/min, viewer clips with 10-200 views): they handed over ordinary gameplay. With Director = Gemini, `studio/scan.py` downloads a tiny 160p copy of the campaign-game parts of each finished stream, cuts it into 20-min pieces and has Gemini list moments worth a Short (MM:SS times, what, why, strict 1-10 score). Moments scoring 6+ are downloaded in full quality (setup → reaction, 30-100 s, `sweep.window`). The two most-viewed viewer clips the scout passed over are added as a safety net. Each piece is cached in `studio_data/scans/<vod>.json`, so interrupted runs resume. Campaign field `games` restricts clipping to Twitch chapters showing those games (`sweep.allowed_ranges`).
+
 ## 4. Architecture
 
 ```
@@ -138,7 +141,12 @@ Studio data lives in `studio_data/` (SQLite `studio.db`, campaigns, clips). Fini
 ---
 
 ## 5. The director
-- **Free director (default):** `studio/free_director.py`, rule-based. It picks the layout, caption style, hook text (en/de/es templates plus top chat phrases), payoff point (the loudest moment near the chat spike), zooms and trim. It avoids repeating recent styles and hooks (`store.recent_styles`, `store.recent_hooks`).
+- **Gemini director (in use, free key from AI Studio, no card):** `studio/gemini_director.py`. Sends a 480p copy of the clip *with sound* plus transcript, chat, campaign brief and the scout's notes. Returns what it saw, who speaks when (streamer/game), a verdict (post or skip), story beats, kept segments (jump cuts), punch-ins with target face/game and a reason each, hook, caption style. Skipped clips go to rejected with the reason. Captions drop game dialogue (`director.streamer_words`).
+  - Interactions API (`POST v1beta/interactions`, header `Api-Revision: 2026-05-20`), `response_format` JSON schema, `generation_config.thinking_level`.
+  - Model chain: gemini-4-hydrogen → gemini-3.8-flash → gemini-3.6-flash → gemini-3.5-flash-lite. **Free tier = 20 requests/day per top model**; 503 "high demand" is common (retry 10 s/30 s, then skip that model 10 min); 429 skips it until Google's "retry in …".
+  - Busy / out of quota / no internet → `DirectorWait`: the clip waits in the queue, it is NOT handed to the rules director.
+  - Free tier: Google may use the clips sent to improve its products.
+- **Rules director (no key):** `studio/free_director.py`, rule-based. It picks the layout, caption style, hook text (en/de/es templates plus top chat phrases), payoff point (the loudest moment near the chat spike), zooms and trim. It avoids repeating recent styles and hooks (`store.recent_styles`, `store.recent_hooks`).
 - **Claude director (optional, paid):** `studio/director.py`. Turn it on with Settings → Director = Claude plus an API key.
   - Model: default `claude-opus-5-5`, with a dropdown for Haiku 5.5, Sonnet 5.5 or Opus 5.5.
   - Call: `client.beta.messages.create` with `betas=["server-side-fallback-2026-07-01"]`, `fallbacks="default"`, and `output_config={"effort":..., "format":{"type":"json_schema","schema":PLAN_SCHEMA}}`.
@@ -206,6 +214,14 @@ Start it with `python -m studio app` or `windows\Start Clipping.bat`. Pages:
   - PyPI drops are handled by per-package retries.
 
 ---
+
+## 9b. Found and fixed on the user's PC (Nov 28)
+- Whisper on the RTX 4060 failed silently (no `cublas64_12.dll`) → clips had no captions. Falls back to CPU; `studio check` runs a real transcription.
+- Every clip opened with a white-noise "whoosh" ~20 dB over a quiet stream, and dynamic loudnorm pumped hiss. Now: measured steady gain to -14 LUFS + limiter, no automatic sound effects (the bundled SFX are synthetic placeholders; real ones needed).
+- Hooks said "HE" for a female streamer → campaign `pronoun` (she/he/they). Post titles "Didn'T" → fixed.
+- Game crop showed a webcam sliver → `render.avoid_cam`.
+- Tests: 18 failed only on Windows temp-folder cleanup (open SQLite) → `tests/conftest.py`. `test_recorder` timing test still fails on Windows (live mode only).
+- **Open:** webcam detection sometimes boxes only part of the overlay (stream 2 of Lauren: real overlay x 0.68-0.98, detected 0.84-1.0), so the top panel is cropped and the game panel shows the overlay edge.
 
 ## 10. Next steps (for this local session)
 1. **Update the folder** to the latest `ccr-8c9d8d98-0303s9`.
