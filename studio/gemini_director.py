@@ -50,6 +50,13 @@ class DirectorWait(RuntimeError):
         self.retry_at = retry_at
 
 
+def _is_network(e: Exception) -> bool:
+    """Timeouts and dropped connections (flaky internet, the laptop waking from sleep): temporary."""
+    import socket
+    return isinstance(e, (TimeoutError, socket.timeout, ConnectionError, urllib.error.URLError)) \
+        and not isinstance(e, urllib.error.HTTPError)
+
+
 def _available_at(model: str) -> float:
     return max(_exhausted.get(model, 0) + 3600, _busy.get(model, 0) + BUSY_COOLDOWN)
 
@@ -217,9 +224,9 @@ def ask(key: str, video: bytes, prompt: str, models: list[str] | None = None) ->
             _exhausted[model] = time.time()
             errors.append(f"{model}: out of free quota")
         except Exception as e:
-            if "HTTP 503" in str(e):
+            if "HTTP 503" in str(e) or "HTTP 500" in str(e) or _is_network(e):
                 _busy[model] = time.time()
-                errors.append(f"{model}: busy")
+                errors.append(f"{model}: {'no connection' if _is_network(e) else 'busy'}")
                 continue
             hard_error = True
             errors.append(f"{model}: {type(e).__name__}: {str(e)[:160]}")

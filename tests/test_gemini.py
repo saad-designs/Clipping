@@ -80,6 +80,10 @@ class ParsingTests(unittest.TestCase):
                     self.assertRaises(gd.DirectorWait):          # the director doesn't swap in the rules
                 director.plan({**ctx(), "words": []}, Path("x.mp4"), {"director": "gemini", "gemini_api_key": "k"})
         gd._exhausted.clear(); gd._busy.clear()
+        with mock.patch.object(gd, "_post", side_effect=TimeoutError("The read operation timed out")):
+            with self.assertRaises(gd.DirectorWait):            # no internet / woke from sleep: wait too
+                gd.ask("k", b"v", "p", ["m1"])
+        gd._exhausted.clear(); gd._busy.clear()
 
     def test_bad_option_retries_without_thinking_settings(self):
         bodies = []
