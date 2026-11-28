@@ -223,6 +223,17 @@ Start it with `python -m studio app` or `windows\Start Clipping.bat`. Pages:
 - Tests: 18 failed only on Windows temp-folder cleanup (open SQLite) → `tests/conftest.py`. `test_recorder` timing test still fails on Windows (live mode only).
 - Webcam box was a guess from the face size (often too tight; on a two-person cam it cut Lauren out). `facecam.find_overlay` now finds the real overlay border: long unbroken lines in the per-clip median edge map, each confirmed by "game moves outside, room still inside" (rejects headboards/shelves). A side with no line runs to the frame edge. If a clip can't find it, `Worker._overlay_from_same_stream` borrows the overlay of the nearest-in-time clip of the same stream that contains the face (streamers move overlays mid-stream: Lauren did). 10/11 found directly on her clips, 1 borrowed.
 
+## 9c. Remote dashboard (built, NOT switched on yet: do it on the permanent laptop)
+The user wants the dashboard reachable from anywhere: backend stays on the PC, the page is hosted on Vercel and talks to the PC through Tailscale Funnel. The laptop used so far is only for building, so Funnel and Vercel were deliberately left off.
+- **Built and pushed:** `studio/auth.py`. Every /api call needs `Authorization: Bearer <token>`; dashboard password (pbkdf2, Settings → Dashboard access, min 10 chars); 30-day sessions; 5 wrong passwords lock the login for 10 min. Videos/logos/frames use signed links (`?sig=`, 6 h) because `<video>/<img>` can't send headers; `&dl=1` downloads. CORS is `*` (safe: bearer tokens, no cookies). On start-up Studio opens and prints a one-time `http://localhost:8790/#login=<token>` link, so the PC's browser is signed in. The page (`studio/web/index.html`) works served by Studio (`window.STUDIO_SAME_ORIGIN`) or from another address (asks for the PC's https address and password, shows "PC offline"). `studio/web/vercel.json` adds noindex/no-frame headers.
+- **Steps on the permanent laptop**, after the normal setup (section 10):
+  1. Run Studio once, then **Settings → Dashboard access → set a password** (the user types it; never in chat).
+  2. `winget install -e --id Tailscale.Tailscale` (admin prompt), then sign in with the user's Tailscale account.
+  3. `tailscale funnel --bg --yes 8790`. The first time it prints a login.tailscale.com link to **enable Funnel** (and HTTPS certificates) on the tailnet. The user approves it. The address is `https://<machine>.<tailnet>.ts.net`; check it with `tailscale funnel status`. `--bg` keeps it on across reboots.
+  4. Vercel: `cd studio\web` → `npx vercel login` (the user signs in) → `npx vercel deploy --prod`. Open the vercel.app address, enter the ts.net address and the password.
+  5. Test from a phone on mobile data: sign in, play a clip, Download, approve. Then turn the PC off: the page should say "Your PC is offline".
+- The build laptop has Tailscale installed and signed in (machine `asus-rog`) but **no Funnel/serve config**. Remove the device from the tailnet, or uninstall Tailscale, if it's no longer wanted.
+
 ## 10. Next steps (for this local session)
 1. **Update the folder** to the latest `ccr-8c9d8d98-0303s9`.
    - If it's a git checkout: `git fetch origin ccr-8c9d8d98-0303s9 && git checkout ccr-8c9d8d98-0303s9 && git pull`.
