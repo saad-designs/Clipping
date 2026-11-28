@@ -197,17 +197,18 @@ def parse_json(text: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
-def ask(key: str, video: bytes, prompt: str, models: list[str] | None = None) -> tuple[dict, str]:
+def ask(key: str, video: bytes, prompt: str, models: list[str] | None = None,
+        schema: dict | None = None, system: str | None = None) -> tuple[dict, str]:
     """Run the director on the first model with quota left. Returns (decision, model)."""
     errors, hard_error = [], False
     models = models or MODELS
     for model in models:
         if time.time() < _available_at(model):
             continue
-        body = {"model": model, "store": False, "system_instruction": SYSTEM,
+        body = {"model": model, "store": False, "system_instruction": system or SYSTEM,
                 "input": [{"type": "video", "data": base64.b64encode(video).decode(), "mime_type": "video/mp4"},
                           {"type": "text", "text": prompt}],
-                "response_format": {"type": "text", "mime_type": "application/json", "schema": SCHEMA},
+                "response_format": {"type": "text", "mime_type": "application/json", "schema": schema or SCHEMA},
                 "generation_config": {"thinking_level": "high"}}
         try:
             try:
@@ -257,6 +258,8 @@ def build_prompt(ctx: dict) -> str:
         "recent_caption_styles_to_avoid": ctx.get("recent_styles", [])[-3:],
         "recent_hooks_to_avoid": ctx.get("recent_hooks", [])[-10:],
     }
+    if ctx.get("scout"):     # the scout watched the whole stream and picked this moment for a reason
+        info["scout_picked_this_because"] = ctx["scout"]
     parts = ["CLIP INFO\n" + json.dumps(info, ensure_ascii=False, indent=1),
              "TRANSCRIPT (speech-to-text of everything audible, streamer AND game; [t] = seconds)\n"
              + (transcript_text(ctx.get("words") or []) or "(nothing said)")]

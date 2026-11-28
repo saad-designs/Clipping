@@ -120,7 +120,7 @@ def build_context(clip: dict, campaign: dict, words: list[Word], facecam: dict |
         "signals": clip.get("signals") or {}, "words": words, "facecam": facecam or {"kind": "none"},
         "recent_styles": recent_styles or [], "notes": notes, "previous_plan": previous_plan,
         "campaign": campaign, "loudness": loudness or [], "language": language, "recent_hooks": recent_hooks or [],
-        "viewer_clips": clip.get("viewer_clips", 0),
+        "viewer_clips": clip.get("viewer_clips", 0), "scout": clip.get("scout"),
     }
 
 

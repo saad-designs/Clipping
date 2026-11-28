@@ -247,6 +247,38 @@ def _audio_scores(platform: str, v: dict, workdir: Path) -> list:
     return vod.score_without_chat(loud, [], v["duration"] or (loud[-1][0] if loud else 0))
 
 
+def scout_moments(store, key: str, ch: dict, camp: dict, v: dict, clips: list, top: int,
+                  allowed, on_status) -> tuple[list[dict], list]:
+    """The director watches the (game) parts of the stream and picks the moments itself."""
+    from studio import scan
+    chat = vod.twitch_chat(v["id"]) if ch["platform"] == "twitch" else []
+    ranges = allowed if allowed is not None else [(0.0, v["duration"])]
+    found = scan.scan_vod(store, key, v, ranges, camp, ch["login"], chat, clips, on_status)
+    good = sorted((m for m in found if m["score"] >= scan.MIN_SCORE), key=lambda m: -m["score"])[:top]
+    log.info("scout found %d moments in %s (%d good enough)", len(found), v["id"], len(good))
+    out = []
+    for m in sorted(good, key=lambda m: m["at"]):
+        n = sum(1 for c in clips if (c.get("video") or {}).get("id") == v["id"]
+                and abs(float(c.get("videoOffsetSeconds") or -999) - m["at"]) < 60)
+        out.append({**m, "viewer_clips": n, "scout": {"what": m["what"], "why": m["why"], "score": m["score"]}})
+    return out, chat
+
+
+def window(m: dict) -> tuple[float, float]:
+    """Which part of the stream to download for a moment: the scout's setup..reaction with room
+    for the director to trim (30-100 s), or the fixed window around a chat spike."""
+    at = m["at"]
+    if "start" not in m:
+        return max(0.0, at - PRE), at + POST
+    start, stop = min(m["start"], at - 5) - 6, max(m["end"], at + 5) + 6
+    if stop - start > 100:
+        start, stop = max(start, at - 60), min(stop, max(start, at - 60) + 100)
+    if stop - start < 30:
+        pad = (30 - (stop - start)) / 2
+        start, stop = start - pad, stop + pad
+    return max(0.0, start), stop
+
+
 # ----------------------------------------------------------------------------- main
 def sweep(store, max_age_days: float = 3.0, on_status=lambda s: None) -> dict:
     """Check every streamer in active campaigns once. Returns {"new_clips", "vods", "errors"}."""
@@ -280,22 +312,29 @@ def sweep(store, max_age_days: float = 3.0, on_status=lambda s: None) -> dict:
                         log.info("skipping %s %s: not one of %s", key, v["title"][:50], camp["games"])
                         continue
                     on_status(f"finding the best moments in {key}: {v['title'][:50]}")
-                    with tempfile.TemporaryDirectory() as tmp:
-                        moments, chat = pick_moments(ch["platform"], v, clips, top, Path(tmp), allowed)
-                    m3u8 = v.get("m3u8") or media_url(v["url"])
+                    s = store.settings()
+                    if s.get("director") == "gemini" and s.get("gemini_api_key") and ch["platform"] in ("twitch", "kick"):
+                        moments, chat = scout_moments(store, s["gemini_api_key"], ch, camp, v, clips, top, allowed, on_status)
+                    else:
+                        with tempfile.TemporaryDirectory() as tmp:
+                            moments, chat = pick_moments(ch["platform"], v, clips, top, Path(tmp), allowed)
+                    m3u8 = (v.get("m3u8") or media_url(v["url"])) if moments else None
                     for i, m in enumerate(moments, 1):
                         on_status(f"downloading moment {i}/{len(moments)} from {key}")
                         out = clips_dir / f"{ch['platform']}_{v['id']}_{int(m['at'])}.mp4"
-                        start = max(0.0, m["at"] - PRE)
+                        start, stop = window(m)
                         if ch["platform"] == "youtube":   # DASH, not HLS: let yt-dlp cut it
-                            real_start = _ytdlp_section(v["url"], start, m["at"] + POST, out)
+                            real_start = _ytdlp_section(v["url"], start, stop, out)
                         else:
-                            real_start = hls_section(m3u8, start, m["at"] + POST, out)
+                            real_start = hls_section(m3u8, start, stop, out)
                         sig = {"z_hype": min(m["score"], 30), "top_chat": top_chat(chat, m["at"]) if chat else []}
-                        cid = store.add_clip(camp["name"], str(out), key, "vod", None, {
-                            "moment_offset": round(m["at"] - real_start, 2), "signals": sig, "score": m["score"],
-                            "viewer_clips": m["viewer_clips"], "vod": v["url"], "vod_time": round(m["at"], 1),
-                            "vod_title": v["title"]})
+                        meta = {"moment_offset": round(m["at"] - real_start, 2), "signals": sig, "score": m["score"],
+                                "viewer_clips": m["viewer_clips"], "vod": v["url"], "vod_time": round(m["at"], 1),
+                                "vod_title": v["title"]}
+                        if m.get("scout"):     # what the scout saw, in this clip's own time
+                            meta["scout"] = {**m["scout"], "start": round(m["start"] - real_start, 1),
+                                             "peak": round(m["at"] - real_start, 1), "end": round(m["end"] - real_start, 1)}
+                        cid = store.add_clip(camp["name"], str(out), key, "vod", None, meta)
                         result["new_clips"] += 1 if cid else 0
                     store.mark_vod(vkey)
                     result["vods"] += 1
